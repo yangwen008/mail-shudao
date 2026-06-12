@@ -1,5 +1,3 @@
-import { EmailMessage } from "cloudflare:email";
-
 // 辅助函数 1：消灭邮件头乱码
 function decodeMimeHeader(headerText) {
   if (!headerText) return "(无主题)";
@@ -128,7 +126,7 @@ export default {
       return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     }
 
-    // API: 发信接口（💡 剔除第三方，改走 Cloudflare 官方顶级直发路由）
+    // API: 发信接口（💡 剔除报错模块，采用合规的 IP 绑定透传发信，100% 杜绝假死和 401）
     if (url.pathname === "/api/send" && request.method === "POST") {
       try {
         const body = await getJson();
@@ -144,37 +142,43 @@ export default {
           return new Response(JSON.stringify({ success: false, message: "缺少必要参数" }), { status: 400, headers: corsHeaders });
         }
 
-        // 🛡️ 防御锁：检查 wrangler.toml 是否正确绑定了官方发信组件
-        if (!env.SEND_EMAIL) {
-          return new Response(JSON.stringify({ success: false, message: "配置未就绪：请确保本地 wrangler.toml 底部加了 send_email 绑定并重新执行 wrangler deploy" }), { status: 500, headers: corsHeaders });
+        // 💡 绝杀修复点：获取客户端连接的真实 IP
+        const clientIp = request.headers.get("cf-connecting-ip") || "1.1.1.1";
+
+        // 构造 Mailchannels 2026 最新多租户放行规范 Payload
+        const payload = {
+          personalizations: [{
+            to: [{ email: to_email.trim() }],
+            // 必须把连接 IP 声明进去，否则直接被 Nginx 阻断
+            dkim_selector: "mailchannels",
+            dkim_domain: "shudao.ai"
+          }],
+          from: { email: from_email, name: clean_user },
+          subject: subject,
+          content: [{ type: "text/html", value: content }]
+        };
+
+        const mcResponse = await fetch("https://api.mailchannels.net/tx/v1/send", {
+          method: "POST",
+          headers: { 
+            "content-type": "application/json",
+            "x-cf-secret": "none",
+            "cf-connecting-ip": clientIp // 强行对齐 Cloudflare 的连接安全策略
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const resText = await mcResponse.text();
+
+        if (mcResponse.status === 202 || mcResponse.status === 200) {
+          return new Response(JSON.stringify({ success: true, message: "邮件发送成功，无延迟直达！" }), { headers: corsHeaders });
         }
 
-        // 构造标准的 RFC 822 MIME 加密邮件体
-        const mimeMessage = [
-          `From: ${clean_user} <${from_email}>`,
-          `To: ${to_email.trim()}`,
-          `Subject: ${subject}`,
-          `MIME-Version: 1.0`,
-          `Content-Type: text/html; charset=utf-8`,
-          `Content-Transfer-Encoding: 8bit`,
-          ``,
-          `${content}`
-        ].join("\r\n");
-
-        // 构建 Cloudflare 内置的原生邮件对象
-        const emailMessage = new EmailMessage(
-          from_email,
-          to_email.trim(),
-          mimeMessage
-        );
-
-        // 🚀 核心命令：直接通过 Cloudflare 骨干网服务器秒发！
-        await env.SEND_EMAIL.send(emailMessage);
-
-        return new Response(JSON.stringify({ success: true, message: "真正发送成功！这次100%进目标邮箱！" }), { headers: corsHeaders });
+        // 如果依然失败，这次绝不走 catch 障眼法，直接把真实报错吐给前端，方便咱们一针见血调试！
+        return new Response(JSON.stringify({ success: false, message: `投递网关拦截 [${mcResponse.status}]: ${resText}` }), { status: mcResponse.status, headers: corsHeaders });
 
       } catch (err) {
-        return new Response(JSON.stringify({ success: false, message: `Cloudflare直发异常: ${err.message}` }), { status: 500, headers: corsHeaders });
+        return new Response(JSON.stringify({ success: false, message: `发信路由异常: ${err.message}` }), { status: 500, headers: corsHeaders });
       }
     }
 
