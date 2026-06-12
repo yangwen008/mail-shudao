@@ -23,7 +23,7 @@ function safeDecodeBase64(base64Str) {
   }
 }
 
-// 辅助函数 3：终极 HTML 标签剥离器（收信脱水，保证网页不显示网页源码）
+// 辅助函数 3：终极 HTML 标签剥离器
 function stripHtmlTags(htmlStr) {
   if (!htmlStr) return "";
   let text = htmlStr;
@@ -126,7 +126,7 @@ export default {
       return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     }
 
-    // API: 发信接口（🚀 换用稳如磐石的 Resend 商业 API 通道）
+    // API: 发信接口（规范化 Headers 验证）
     if (url.pathname === "/api/send" && request.method === "POST") {
       try {
         const body = await getJson();
@@ -142,37 +142,48 @@ export default {
           return new Response(JSON.stringify({ success: false, message: "缺少必要参数" }), { status: 400, headers: corsHeaders });
         }
 
-        // 💡 验证环境变量
-        const apiKey = env.RESEND_API_KEY;
+        // 💡 严格清洗和校验本地变量
+        let apiKey = env.RESEND_API_KEY;
         if (!apiKey) {
-          return new Response(JSON.stringify({ success: false, message: "错误：未在 Cloudflare 变量中检测到 RESEND_API_KEY" }), { status: 500, headers: corsHeaders });
+          return new Response(JSON.stringify({ success: false, message: "错误：未检测到 RESEND_API_KEY，请确保已在 Cloudflare 后台配置该变量。" }), { status: 500, headers: corsHeaders });
         }
 
-        // 直接向 Resend 官方高誉度中继发起投递请求
+        // 去除可能误复制的换行符或空格
+        apiKey = apiKey.trim();
+
+        // 💡 严格遵循 Resend 官方规范：确保 Bearer 和 Key 之间只有一个英文空格
+        const authHeaderValue = `Bearer ${apiKey}`;
+
         const resendResponse = await fetch("https://api.resend.com/emails", {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${apiKey.trim()}`,
+            "Authorization": authHeaderValue,
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
             from: `${clean_user} <${from_email}>`,
             to: [to_email.trim()],
             subject: subject,
-            html: content // 前端富文本无缝适配
+            html: content
           })
         });
 
-        const resData = await resendResponse.json();
+        const resText = await resendResponse.text();
+        let resData = {};
+        try { resData = JSON.parse(resText); } catch(e) {}
 
         if (resendResponse.ok) {
-          return new Response(JSON.stringify({ success: true, message: "邮件通过 Resend 通道完美发送成功！" }), { headers: corsHeaders });
+          return new Response(JSON.stringify({ success: true, message: "邮件发送成功！" }), { headers: corsHeaders });
         }
 
-        return new Response(JSON.stringify({ success: false, message: `Resend拒绝投递: ${resData.message || JSON.stringify(resData)}` }), { status: resendResponse.status, headers: corsHeaders });
+        // 如果报错，直接打印真实详情
+        return new Response(JSON.stringify({ 
+          success: false, 
+          message: `Resend 拒绝投递 [状态码 ${resendResponse.status}]: ${resData.message || resText}` 
+        }), { status: resendResponse.status, headers: corsHeaders });
 
       } catch (err) {
-        return new Response(JSON.stringify({ success: false, message: `发信路由异常: ${err.message}` }), { status: 500, headers: corsHeaders });
+        return new Response(JSON.stringify({ success: false, message: `代码运行异常: ${err.message}` }), { status: 500, headers: corsHeaders });
       }
     }
 
