@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SHUDAO.AI 私人邮局</title>
+    <title>收件箱 - 蜀道AI邮箱</title>
     <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <style>
@@ -15,7 +15,6 @@
         .user-info { color: #666; font-size: 12px; }
         .main-container { display: flex; flex: 1; overflow: hidden; }
         
-        /* QQ 邮箱同款侧边栏 */
         .sidebar { width: 180px; background: #f3f7fa; border-right: 1px solid #d2dae2; padding: 10px 5px; overflow-y: auto; }
         .btn-write { width: 100%; height: 32px; background: #2b7ac6; color: white; border: 1px solid #1a5c9f; border-radius: 3px; cursor: pointer; font-weight: bold; font-size: 14px; margin-bottom: 15px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
         .btn-write:hover { background: #3c8bcf; }
@@ -60,7 +59,7 @@
 <div id="app">
     <div class="header">
         <div class="logo-area">
-            <span>MФiL</span> <span style="font-size: 13px; font-weight: normal; color: #666;">树道邮局</span>
+            <span>MФiL</span> <span style="font-size: 13px; font-weight: normal; color: #666;">蜀道AI邮箱</span>
         </div>
         <div class="user-info">
             <strong>{{ username }}@shudao.ai</strong> | <a href="#" @click="logout" style="color: #2b7ac6; text-decoration: none;">退出</a>
@@ -176,10 +175,15 @@
 <script>
     const API_BASE = window.location.origin;
 
+    // 🔒 建立安全拦截，未登录直接踢回登录页
+    if (!localStorage.getItem('mail_username')) {
+        window.location.href = '/login.html';
+    }
+
     new Vue({
         el: '#app',
         data: {
-            username: 'admin',
+            username: localStorage.getItem('mail_username') || 'admin',
             currentFilter: 'inbox',
             viewMode: 'list',
             emails: [],
@@ -187,7 +191,9 @@
             composeData: { to: '', subject: '', content: '' }
         },
         created() {
-            this.fetchEmails();
+            if(localStorage.getItem('mail_username')) {
+                this.fetchEmails();
+            }
         },
         methods: {
             fetchEmails() {
@@ -223,7 +229,7 @@
                 })
                 .then(res => {
                     alert(res.data.message || '发送成功！');
-                    this.changeFilter('sent'); // 发送成功自动切入已发送状态箱
+                    this.changeFilter('sent');
                 })
                 .catch(err => {
                     const errMsg = err.response && err.response.data ? err.response.data.message : err.message;
@@ -236,14 +242,17 @@
                 axios.patch(`${API_BASE}/api/emails/status`, { id: mail.id, field: 'is_starred', value: targetValue });
             },
             mockDelete() {
-                alert('基本兼容模式下，删除机制建议直接去 Cloudflare D1 进行物理清空。');
+                alert('兼容模式下，删除建议直接去 Cloudflare D1 库物理清空。');
             },
             formatTime(timeStr) {
                 if (!timeStr) return '';
                 const date = new Date(timeStr);
                 return (date.getMonth() + 1) + '月' + date.getDate() + '日';
             },
-            logout() { alert('安全退出'); }
+            logout() { 
+                localStorage.removeItem('mail_username');
+                window.location.href = '/login.html';
+            }
         }
     });
 </script>
