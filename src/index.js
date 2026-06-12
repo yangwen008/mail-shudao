@@ -1,6 +1,5 @@
-// ================= 辅助工具函数：解决乱码、解析与脱水 =================
+// ================= 辅助工具函数 =================
 
-// 辅助函数 1：消灭邮件主题中出现的 =?UTF-8?B?...?= 这种乱码
 function decodeMimeHeader(headerText) {
   if (!headerText) return "(无主题)";
   const regex = /=\?UTF-8\?B\?([^\?]+)\?=/gi;
@@ -14,7 +13,6 @@ function decodeMimeHeader(headerText) {
   });
 }
 
-// 辅助函数 2：安全还原被 Base64 加密的邮件正文段落
 function safeDecodeBase64(base64Str) {
   try {
     const cleanStr = base64Str.replace(/\s/g, "");
@@ -25,23 +23,19 @@ function safeDecodeBase64(base64Str) {
   }
 }
 
-// 辅助函数 3：强力脱水 HTML 标签，确保前端展示纯净文本，防止标签源码裸露
 function stripHtmlTags(htmlStr) {
   if (!htmlStr) return "";
   let text = htmlStr;
   text = text.replace(/<(p|div|br|tr)[^>]*>/gi, "\n");
   text = text.replace(/<[^>]+>/g, "");
-  text = text.replace(/&nbsp;/g, " ")
-             .replace(/&lt;/g, "<")
-             .replace(/&gt;/g, ">")
-             .replace(/&amp;/g, "&");
+  text = text.replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
   return text.split("\n").map(line => line.trim()).filter(line => line !== "").join("\n");
 }
 
 // ================= Worker 核心逻辑引擎 =================
 
 export default {
-  // 核心入口 1：处理外部投递进来的邮件并无缝存入 D1 数据库（收信）
+  // 入口 1：处理外部投递进来的邮件（外部收信）
   async email(message, env, ctx) {
     const to_address = message.to;
     const from_address = message.from;
@@ -54,7 +48,6 @@ export default {
       const boundaryMatch = contentTypeHeader.match(/boundary=(?:"([^"]+)"|([^;\s]+))/i) || rawText.match(/boundary="?([^"\r\n]+)"?/i);
       
       if (boundaryMatch) {
-        // 多段式高复杂度邮件结构解析（如来自 Gmail / QQ 的富文本邮件）
         const boundary = boundaryMatch[1] || boundaryMatch[2];
         const parts = rawText.split(`--${boundary}`);
         let extractedHtml = "";
@@ -77,7 +70,6 @@ export default {
         }
         body_text = extractedPlain || extractedHtml || "[邮件内容为空]";
       } else {
-        // 基础明文或单段 Base64 邮件流解析
         let contentPart = rawText.includes("\r\n\r\n") ? rawText.split("\r\n\r\n").slice(1).join("\r\n\r\n") : rawText;
         body_text = rawText.includes("Content-Transfer-Encoding: base64") ? safeDecodeBase64(contentPart.split("\r\n--")[0]) : contentPart;
       }
@@ -86,12 +78,12 @@ export default {
       body_text = `[邮件解析异常]: ${err.message}`;
     }
 
-    // 执行存库
+    // 收进来的信，打入 D1
     await env.DB.prepare("INSERT INTO emails (to_address, from_address, subject, body_text) VALUES (?, ?, ?, ?)")
       .bind(to_address, from_address, subject, body_text).run();
   },
 
-  // 核心入口 2：响应前端网页的 HTTP 交互请求（API 路由与发信）
+  // 入口 2：前端网页 HTTP 交互接口（含收信箱、发件箱过滤机制）
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const corsHeaders = {
@@ -124,21 +116,36 @@ export default {
       return new Response(JSON.stringify({ success: false, message: "密码错误" }), { status: 401, headers: corsHeaders });
     }
 
-    // API: 拉取收件列表
+    // API: 获取邮件列表（💡 升级：支持收件箱与发件箱的智能过滤）
     if (url.pathname === "/api/emails" && request.method === "GET") {
       const username = url.searchParams.get("username");
-      const { results } = await env.DB.prepare("SELECT * FROM emails WHERE to_address LIKE ? ORDER BY received_at DESC").bind(`${username}@%`).all();
+      const filter = url.searchParams.get("filter") || "inbox"; // 接收前端传来的过滤标识: inbox 或 sent
+
+      let sql = "";
+      let params = [];
+
+      if (filter === "sent") {
+        // 📥 发件箱逻辑：查询发件人是我自己的所有历史记录
+        sql = "SELECT * FROM emails WHERE from_address LIKE ? ORDER BY received_at DESC";
+        params.push(`${username}@%`);
+      } else {
+        // 📤 收件箱逻辑（默认）：查询收件人是我自己的历史记录
+        sql = "SELECT * FROM emails WHERE to_address LIKE ? ORDER BY received_at DESC";
+        params.push(`${username}@%`);
+      }
+
+      const { results } = await env.DB.prepare(sql).bind(...params).all();
       return new Response(JSON.stringify(results), { headers: corsHeaders });
     }
 
-    // API: 局部更新邮件属性（星标、已读、状态修改）
+    // API: 修改邮件状态
     if (url.pathname === "/api/emails/status" && request.method === "PATCH") {
       const { id, field, value } = await getJson();
       await env.DB.prepare(`UPDATE emails SET ${field} = ? WHERE id = ?`).bind(value, id).run();
       return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     }
 
-    // API: 发信接口（💡 顶级主域 shudao.ai 物理锁死版，完美通关！）
+    // API: 发信接口（💡 升级：成功后自动在本地 D1 数据库中备份，生成发件箱记录）
     if (url.pathname === "/api/send" && request.method === "POST") {
       try {
         const body = await getJson();
@@ -146,26 +153,23 @@ export default {
         const subject = body.subject || "(无主题)";
         const content = body.content || "";
 
-        // 强力剥离任何前端混入的后缀，确保干净提取前缀
         let rawUser = "admin";
         if (body.from_user) rawUser = body.from_user.split('@')[0];
         else if (body.from) rawUser = body.from.split('@')[0];
         
         const clean_user = rawUser.trim();
-        
-        // 💡 核心改动：移出过渡时期的 mail. 二级前缀，完美对齐通过验证的主域名！
-        const from_email = `${clean_user}@shudao.ai`; 
+        const from_email = `${clean_user}@shudao.ai`; // 锁死主域名
 
         if (!to_email || !content) {
-          return new Response(JSON.stringify({ success: false, message: "缺少必要参数（收件人或内容为空）" }), { status: 400, headers: corsHeaders });
+          return new Response(JSON.stringify({ success: false, message: "缺少必要参数" }), { status: 400, headers: corsHeaders });
         }
 
         const apiKey = env.RESEND_API_KEY;
         if (!apiKey) {
-          return new Response(JSON.stringify({ success: false, message: "配置错误：未检测到 RESEND_API_KEY，请在 Cloudflare 变量中添加。" }), { status: 500, headers: corsHeaders });
+          return new Response(JSON.stringify({ success: false, message: "配置错误：未检测到 RESEND_API_KEY" }), { status: 500, headers: corsHeaders });
         }
 
-        // 呼叫 Resend 高誉度网关出网投递
+        // 1. 调用 Resend 发送邮件
         const resendResponse = await fetch("https://api.resend.com/emails", {
           method: "POST",
           headers: {
@@ -173,7 +177,7 @@ export default {
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            from: `${clean_user} <${from_email}>`, // 拼装成完全合规的主域发件头
+            from: `${clean_user} <${from_email}>`,
             to: [to_email.trim()],
             subject: subject,
             html: content
@@ -185,16 +189,23 @@ export default {
         try { resData = JSON.parse(resText); } catch(e) {}
 
         if (resendResponse.ok) {
-          return new Response(JSON.stringify({ success: true, message: "邮件通过主域名 shudao.ai 通道成功发送！" }), { headers: corsHeaders });
+          // 💡 核心增补：发信成功后，顺手往本地 D1 数据库插入一条记录，作为发件箱的历史凭证
+          // 将 strippedHtml 的纯文本或原始内容存入本地，打上标记
+          const cleanSentBody = stripHtmlTags(content);
+          await env.DB.prepare(
+            "INSERT INTO emails (to_address, from_address, subject, body_text) VALUES (?, ?, ?, ?)"
+          ).bind(to_email.trim(), from_email, subject, cleanSentBody).run();
+
+          return new Response(JSON.stringify({ success: true, message: "邮件发送成功，并已同步至发件箱！" }), { headers: corsHeaders });
         }
 
         return new Response(JSON.stringify({ 
           success: false, 
-          message: `Resend拒绝投递 [尝试发件人: ${from_email}]: ${resData.message || resText}` 
+          message: `Resend拒绝投递: ${resData.message || resText}` 
         }), { status: resendResponse.status, headers: corsHeaders });
 
       } catch (err) {
-        return new Response(JSON.stringify({ success: false, message: `代码运行异常: ${err.message}` }), { status: 500, headers: corsHeaders });
+        return new Response(JSON.stringify({ success: false, message: `发信路由异常: ${err.message}` }), { status: 500, headers: corsHeaders });
       }
     }
 
