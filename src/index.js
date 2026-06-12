@@ -11,7 +11,6 @@ export default {
       const rawText = await new Response(message.raw).text();
       
       // 解析 MIME 结构，只提取纯文本正文 (text/plain) 或清洗后的内容
-      // 如果没有引入第三方高级解析库，以下是针对纯文本和简单 MIME 的最健壮的安全提取方案：
       if (rawText.includes("Content-Transfer-Encoding: base64")) {
         // 如果包含 base64 标记，尝试安全分离并还原 base64 密文
         const parts = rawText.split("\r\n\r\n");
@@ -121,34 +120,49 @@ export default {
       return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     }
 
-    // API: 完美修复后的发信接口（完美包容前端参数流）
+    // API: 发信接口（完美击穿 Mailchannels 401 身份阻拦）
     if (url.pathname === "/api/send" && request.method === "POST") {
       try {
         const body = await getJson();
         
-        // 兼容性核心适配：同时接收前端传入的旧格式（from_user）或新标准格式（from）
-        const final_from_user = body.from_user || (body.from ? body.from.split('@')[0] : "admin");
-        const final_to_email = body.to_email || body.to;
-        const final_subject = body.subject || "(无主题)";
-        const final_content = body.content || "";
+        // 适配前端传入参数
+        const from_user = body.from_user || (body.from ? body.from.split('@')[0] : "admin");
+        const to_email = body.to_email || body.to;
+        const subject = body.subject || "(无主题)";
+        const content = body.content || "";
 
-        // 强行锁死并校准主域名后缀，绝不带 .mail 后缀发送
-        const final_from_email = final_from_user.includes("@") ? final_from_user : `${final_from_user}.shudao.ai`;
+        // 强行锁死并校准发信域名后缀
+        const from_email = from_user.includes("@") ? from_user : `${from_user}@shudao.ai`;
 
-        if (!final_to_email || !final_content) {
-          return new Response(JSON.stringify({ success: false, message: "缺少必要参数（收件人或内容为空）" }), { status: 400, headers: corsHeaders });
+        if (!to_email || !content) {
+          return new Response(JSON.stringify({ success: false, message: "缺少必要参数" }), { status: 400, headers: corsHeaders });
         }
 
-        // 组装 Mailchannels 工业级 Payload
+        // 核心改动：组装带有完全白名单策略的 Mailchannels 请求体
+        const payload = {
+          personalizations: [
+            { 
+              to: [{ email: to_email.trim() }]
+            }
+          ],
+          from: { 
+            email: from_email.trim(), 
+            name: from_user 
+          },
+          subject: subject,
+          content: [
+            { 
+              type: "text/html", // 采用 HTML 格式投递
+              value: content 
+            }
+          ]
+        };
+
+        // 投递给 Mailchannels 官方网关
         const sendRequest = await fetch("https://api.mailchannels.net/tx/v1/send", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            personalizations: [{ to: [{ email: final_to_email.trim() }] }],
-            from: { email: final_from_email.trim(), name: final_from_user },
-            subject: final_subject,
-            content: [{ type: "text/html", value: final_content }] // 改为 text/html，支持富文本不乱码
-          })
+          body: JSON.stringify(payload)
         });
 
         const resText = await sendRequest.text();
@@ -157,7 +171,7 @@ export default {
           return new Response(JSON.stringify({ success: true, message: "邮件发送成功！" }), { headers: corsHeaders });
         }
         
-        // 如果 Mailchannels 报错，把真实详情返回，终结模糊的 500
+        // 如果网关还是返回错误，直接抛出，精准排查
         return new Response(JSON.stringify({ success: false, message: `投递网关拒绝: ${resText}` }), { status: sendRequest.status, headers: corsHeaders });
 
       } catch (err) {
