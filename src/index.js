@@ -81,7 +81,7 @@ export default {
       .bind(to_address, from_address, subject, body_text).run();
   },
 
-  // 核心：处理网页前端的 HTTP 请求
+  // 核心：处理网页前端 of HTTP 请求
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const corsHeaders = {
@@ -126,7 +126,7 @@ export default {
       return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     }
 
-    // API: 发信接口（💡 剔除报错模块，采用合规的 IP 绑定透传发信，100% 杜绝假死和 401）
+    // API: 发信接口（彻底清洗，绝不瞎弹多余配置提示）
     if (url.pathname === "/api/send" && request.method === "POST") {
       try {
         const body = await getJson();
@@ -142,14 +142,12 @@ export default {
           return new Response(JSON.stringify({ success: false, message: "缺少必要参数" }), { status: 400, headers: corsHeaders });
         }
 
-        // 💡 绝杀修复点：获取客户端连接的真实 IP
+        // 获取当前请求的真实 IP 进行透传，防止匿名直接被 Nginx 拦杀
         const clientIp = request.headers.get("cf-connecting-ip") || "1.1.1.1";
 
-        // 构造 Mailchannels 2026 最新多租户放行规范 Payload
         const payload = {
           personalizations: [{
             to: [{ email: to_email.trim() }],
-            // 必须把连接 IP 声明进去，否则直接被 Nginx 阻断
             dkim_selector: "mailchannels",
             dkim_domain: "shudao.ai"
           }],
@@ -162,23 +160,22 @@ export default {
           method: "POST",
           headers: { 
             "content-type": "application/json",
-            "x-cf-secret": "none",
-            "cf-connecting-ip": clientIp // 强行对齐 Cloudflare 的连接安全策略
+            "cf-connecting-ip": clientIp 
           },
           body: JSON.stringify(payload)
         });
 
         const resText = await mcResponse.text();
 
+        // 真实状态直接吐回：成便成，不成直接把网关原始错误砸出来，绝不自己制造障眼法
         if (mcResponse.status === 202 || mcResponse.status === 200) {
-          return new Response(JSON.stringify({ success: true, message: "邮件发送成功，无延迟直达！" }), { headers: corsHeaders });
+          return new Response(JSON.stringify({ success: true, message: "发送成功！" }), { headers: corsHeaders });
         }
 
-        // 如果依然失败，这次绝不走 catch 障眼法，直接把真实报错吐给前端，方便咱们一针见血调试！
         return new Response(JSON.stringify({ success: false, message: `投递网关拦截 [${mcResponse.status}]: ${resText}` }), { status: mcResponse.status, headers: corsHeaders });
 
       } catch (err) {
-        return new Response(JSON.stringify({ success: false, message: `发信路由异常: ${err.message}` }), { status: 500, headers: corsHeaders });
+        return new Response(JSON.stringify({ success: false, message: `运行时异常: ${err.message}` }), { status: 500, headers: corsHeaders });
       }
     }
 
