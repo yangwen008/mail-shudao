@@ -23,7 +23,7 @@ function safeDecodeBase64(base64Str) {
   }
 }
 
-// 辅助函数 3：终极 HTML 标签剥离器
+// 辅助函数 3：终极 HTML 标签剥离器（收信脱水，保证网页不显示网页源码）
 function stripHtmlTags(htmlStr) {
   if (!htmlStr) return "";
   let text = htmlStr;
@@ -81,7 +81,7 @@ export default {
       .bind(to_address, from_address, subject, body_text).run();
   },
 
-  // 核心：处理网页前端 of HTTP 请求
+  // 核心：处理网页前端的 HTTP 请求
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const corsHeaders = {
@@ -126,7 +126,7 @@ export default {
       return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     }
 
-    // API: 发信接口（彻底清洗，绝不瞎弹多余配置提示）
+    // API: 发信接口（🚀 换用稳如磐石的 Resend 商业 API 通道）
     if (url.pathname === "/api/send" && request.method === "POST") {
       try {
         const body = await getJson();
@@ -142,40 +142,37 @@ export default {
           return new Response(JSON.stringify({ success: false, message: "缺少必要参数" }), { status: 400, headers: corsHeaders });
         }
 
-        // 获取当前请求的真实 IP 进行透传，防止匿名直接被 Nginx 拦杀
-        const clientIp = request.headers.get("cf-connecting-ip") || "1.1.1.1";
-
-        const payload = {
-          personalizations: [{
-            to: [{ email: to_email.trim() }],
-            dkim_selector: "mailchannels",
-            dkim_domain: "shudao.ai"
-          }],
-          from: { email: from_email, name: clean_user },
-          subject: subject,
-          content: [{ type: "text/html", value: content }]
-        };
-
-        const mcResponse = await fetch("https://api.mailchannels.net/tx/v1/send", {
-          method: "POST",
-          headers: { 
-            "content-type": "application/json",
-            "cf-connecting-ip": clientIp 
-          },
-          body: JSON.stringify(payload)
-        });
-
-        const resText = await mcResponse.text();
-
-        // 真实状态直接吐回：成便成，不成直接把网关原始错误砸出来，绝不自己制造障眼法
-        if (mcResponse.status === 202 || mcResponse.status === 200) {
-          return new Response(JSON.stringify({ success: true, message: "发送成功！" }), { headers: corsHeaders });
+        // 💡 验证环境变量
+        const apiKey = env.RESEND_API_KEY;
+        if (!apiKey) {
+          return new Response(JSON.stringify({ success: false, message: "错误：未在 Cloudflare 变量中检测到 RESEND_API_KEY" }), { status: 500, headers: corsHeaders });
         }
 
-        return new Response(JSON.stringify({ success: false, message: `投递网关拦截 [${mcResponse.status}]: ${resText}` }), { status: mcResponse.status, headers: corsHeaders });
+        // 直接向 Resend 官方高誉度中继发起投递请求
+        const resendResponse = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${apiKey.trim()}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            from: `${clean_user} <${from_email}>`,
+            to: [to_email.trim()],
+            subject: subject,
+            html: content // 前端富文本无缝适配
+          })
+        });
+
+        const resData = await resendResponse.json();
+
+        if (resendResponse.ok) {
+          return new Response(JSON.stringify({ success: true, message: "邮件通过 Resend 通道完美发送成功！" }), { headers: corsHeaders });
+        }
+
+        return new Response(JSON.stringify({ success: false, message: `Resend拒绝投递: ${resData.message || JSON.stringify(resData)}` }), { status: resendResponse.status, headers: corsHeaders });
 
       } catch (err) {
-        return new Response(JSON.stringify({ success: false, message: `运行时异常: ${err.message}` }), { status: 500, headers: corsHeaders });
+        return new Response(JSON.stringify({ success: false, message: `发信路由异常: ${err.message}` }), { status: 500, headers: corsHeaders });
       }
     }
 
