@@ -23,20 +23,16 @@ function safeDecodeBase64(base64Str) {
   }
 }
 
-// 辅助函数 3：终极 HTML 标签剥离器（强力脱水，不留任何死角标签）
+// 辅助函数 3：终极 HTML 标签剥离器
 function stripHtmlTags(htmlStr) {
   if (!htmlStr) return "";
   let text = htmlStr;
-  // 1. 先把常见的换行标签和块级标签替换成标准换行，保证排版不全缩成一团
   text = text.replace(/<(p|div|br|tr)[^>]*>/gi, "\n");
-  // 2. 强力抹除所有剩余的类似 <...any...> 的标签
   text = text.replace(/<[^>]+>/g, "");
-  // 3. 还原常见的 HTML 转义字符（如 &nbsp; &lt; &gt;）
   text = text.replace(/&nbsp;/g, " ")
              .replace(/&lt;/g, "<")
              .replace(/&gt;/g, ">")
              .replace(/&amp;/g, "&");
-  // 4. 清洗掉多余的连续空白和首尾空行
   return text.split("\n").map(line => line.trim()).filter(line => line !== "").join("\n");
 }
 
@@ -90,7 +86,6 @@ export default {
           }
         }
         
-        // 判定提取路由
         if (extractedPlain) {
           body_text = extractedPlain;
         } else if (extractedHtml) {
@@ -111,14 +106,12 @@ export default {
         }
       }
 
-      // 💡 核心收尾：在这里对最终生成的 body_text 执行终极脱水，确保不管什么路径进来的代码全部灰飞烟灭
       body_text = stripHtmlTags(body_text);
 
     } catch (err) {
       body_text = `[邮件解析异常]: ${err.message}`;
     }
 
-    // 存入干净的纯文本
     await env.DB.prepare(
       "INSERT INTO emails (to_address, from_address, subject, body_text) VALUES (?, ?, ?, ?)"
     ).bind(to_address, from_address, subject, body_text).run();
@@ -199,7 +192,7 @@ export default {
       return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     }
 
-    // API: 发信接口
+    // API: 发信接口（纯净免 Key 版：强行剥离二级域，锁死主域名资产对齐）
     if (url.pathname === "/api/send" && request.method === "POST") {
       try {
         const body = await getJson();
@@ -207,19 +200,13 @@ export default {
         const to_email = body.to_email || body.to;
         const subject = body.subject || "(无主题)";
         const content = body.content || "";
-        const from_email = from_user.includes("@") ? from_user : `${from_user}@shudao.ai`;
+
+        // 💡 绝杀改动：在这里把可能被污染的二级域名后缀全部无脑剪掉，强制还原成在公网配过 TXT 记录的 shudao.ai 主域！
+        const clean_user = from_user.split('@')[0].trim();
+        const from_email = `${clean_user}@shudao.ai`;
 
         if (!to_email || !content) {
           return new Response(JSON.stringify({ success: false, message: "缺少必要参数" }), { status: 400, headers: corsHeaders });
-        }
-
-        if (env.RESEND_API_KEY) {
-          const sendRequest = await fetch("https://api.resend.com/emails", {
-            method: "POST",
-            headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ from: `${from_user} <${from_email.trim()}>`, to: [to_email.trim()], subject: subject, html: content })
-          });
-          if (sendRequest.ok) return new Response(JSON.stringify({ success: true, message: "邮件发送成功！" }), { headers: corsHeaders });
         }
 
         const sendRequest = await fetch("https://api.mailchannels.net/tx/v1/send", {
@@ -227,10 +214,13 @@ export default {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             personalizations: [{ to: [{ email: to_email.trim() }] }],
-            from: { email: from_email.trim(), name: from_user },
+            from: { 
+              email: from_email, // 绝对纯净的 xxx@shudao.ai
+              name: clean_user 
+            },
             subject: subject,
             content: [{ type: "text/html", value: content }],
-            whitelabel: "shudao.ai"
+            whitelabel: "shudao.ai" // 顶级对齐锁
           })
         });
 
