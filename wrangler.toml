@@ -1,0 +1,12 @@
+name = "cf-free-mail"
+main = "src/index.js"
+compatibility_date = "2026-03-01"
+
+# 将 public 目录下的静态网页托管出去
+assets = { directory = "./public" }
+
+# 绑定 D1 数据库
+[[d1_databases]]
+binding = "DB"
+database_name = "mail_db"
+database_id = "mail_db_D1_DATABASE_ID"
