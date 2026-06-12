@@ -51,7 +51,13 @@
         .form-group { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #eee; padding: 8px 0; }
         .form-label { width: 60px; color: #666; font-size: 13px; }
         .form-input { flex: 1; border: none; outline: none; font-size: 14px; padding: 4px; }
-        .form-textarea { flex: 1; height: 300px; border: 1px solid #ddd; padding: 10px; font-size: 14px; resize: none; outline: none; border-radius: 3px; }
+        .form-textarea { flex: 1; height: 260px; border: 1px solid #ddd; padding: 10px; font-size: 14px; resize: none; outline: none; border-radius: 3px; }
+
+        /* 💡 附件展示区样式 */
+        .attachment-zone { background: #f8fafc; border: 1px dashed #cbd5e1; padding: 12px; border-radius: 6px; margin-top: 10px; }
+        .attachment-item { display: inline-flex; align-items: center; background: #fff; border: 1px solid #e2e8f0; padding: 4px 10px; border-radius: 4px; font-size: 12px; margin-right: 8px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        .btn-remove-file { margin-left: 8px; color: #ef4444; cursor: pointer; font-weight: bold; }
+        .btn-remove-file:hover { color: #b91c1c; }
     </style>
 </head>
 <body>
@@ -154,6 +160,8 @@
             <template v-else-if="viewMode === 'compose'">
                 <div class="toolbar">
                     <button class="btn-tool" @click="sendMail" style="background: #2b7ac6; color: white; font-weight: bold; border-color: #1a5c9f;">立即发送</button>
+                    <button class="btn-tool" @click="triggerFileInput">📎 添加附件</button>
+                    <input type="file" ref="fileInput" @change="handleFileChange" style="display: none;" multiple>
                     <button class="btn-tool" @click="viewMode = 'list'">取消</button>
                 </div>
                 <div class="view-container">
@@ -165,6 +173,15 @@
                         <span class="form-label">主题</span>
                         <input type="text" v-model="composeData.subject" class="form-input" placeholder="输入邮件主题...">
                     </div>
+                    
+                    <div v-if="attachedFiles.length > 0" class="attachment-zone">
+                        <div style="font-size: 12px; color: #64748b; margin-bottom: 6px; font-weight: bold;">已添加附件：</div>
+                        <div class="attachment-item" v-for="(file, index) in attachedFiles" :key="index">
+                            <span>📄 {{ file.filename }} ({{ (file.size / 1024).toFixed(1) }} KB)</span>
+                            <span class="btn-remove-file" @click="removeFile(index)">×</span>
+                        </div>
+                    </div>
+
                     <div style="display: flex; flex: 1; margin-top: 10px;">
                         <textarea v-model="composeData.content" class="form-textarea" placeholder="输入正文内容..."></textarea>
                     </div>
@@ -189,7 +206,8 @@
             viewMode: 'list',
             emails: [],
             activeMail: null,
-            composeData: { to: '', subject: '', content: '' }
+            composeData: { to: '', subject: '', content: '' },
+            attachedFiles: [] // 💡 存放转换好 Base64 的附件数组
         },
         created() {
             if(localStorage.getItem('mail_username')) {
@@ -211,11 +229,39 @@
             },
             switchToCompose() {
                 this.composeData = { to: '', subject: '', content: '' };
+                this.attachedFiles = [];
                 this.viewMode = 'compose';
             },
             readMail(mail) {
                 this.activeMail = mail;
                 this.viewMode = 'read';
+            },
+            triggerFileInput() {
+                this.$refs.fileInput.click();
+            },
+            // 💡 附件核心技术段：抓取物理文件，利用 FileReader 绞碎切片为 Base64 文本
+            handleFileChange(event) {
+                const files = event.target.files;
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    const reader = new FileReader();
+                    
+                    reader.onload = (e) => {
+                        // e.target.result 的格式类似为 "data:image/png;base64,iVBORw0KGgo..."
+                        const rawResult = e.target.result;
+                        const base64Data = rawResult.split(',')[1]; // 精准截取真实的文本部分
+                        
+                        this.attachedFiles.push({
+                            filename: file.name,
+                            content: base64Data,
+                            size: file.size
+                        });
+                    };
+                    reader.readAsDataURL(file); // 触发 Base64 数据读取
+                }
+            },
+            removeFile(index) {
+                this.attachedFiles.splice(index, 1);
             },
             sendMail() {
                 if (!this.composeData.to || !this.composeData.content) {
@@ -226,7 +272,8 @@
                     from_user: this.username,
                     to_email: this.composeData.to,
                     subject: this.composeData.subject,
-                    content: this.composeData.content
+                    content: this.composeData.content,
+                    attachments: this.attachedFiles // 💡 顺带把切片完成的附件文本丢给后端
                 })
                 .then(res => {
                     alert(res.data.message || '发送成功！');
@@ -242,37 +289,22 @@
                 mail.is_starred = targetValue;
                 axios.patch(`${API_BASE}/api/emails/status`, { id: mail.id, field: 'is_starred', value: targetValue });
             },
-            // 💡 双阶删除融合判定
             deleteMail(mail) {
                 if (this.currentFilter === 'trash') {
-                    // 阶梯 2：如果已经在回收站，执行永久清除命令（物理粉碎）
-                    if (!confirm('警告：此操作将在服务器上物理擦除该邮件，属于不可逆操作！确定要永久删除吗？')) {
-                        return;
-                    }
-                    axios.patch(`${API_BASE}/api/emails/status`, { 
-                        id: mail.id, 
-                        field: 'permanent_delete', 
-                        value: 'true' 
-                    })
+                    if (!confirm('确定要永久删除该邮件吗？')) return;
+                    axios.patch(`${API_BASE}/api/emails/status`, { id: mail.id, field: 'permanent_delete', value: 'true' })
                     .then(() => {
-                        alert('邮件已从底层数据库永久粉碎！');
+                        alert('邮件已永久粉碎！');
                         this.viewMode = 'list';
                         this.fetchEmails();
-                    })
-                    .catch(err => { alert('永久删除失败: ' + err.message); });
+                    });
                 } else {
-                    // 阶梯 1：普通箱中点击，执行移入回收站命令
-                    axios.patch(`${API_BASE}/api/emails/status`, { 
-                        id: mail.id, 
-                        field: 'execute_delete', 
-                        value: this.username 
-                    })
+                    axios.patch(`${API_BASE}/api/emails/status`, { id: mail.id, field: 'execute_delete', value: this.username })
                     .then(() => {
-                        alert('邮件已成功移入已删除（回收站）！');
+                        alert('邮件已移入回收站！');
                         this.viewMode = 'list';
                         this.fetchEmails();
-                    })
-                    .catch(err => { alert('删除失败: ' + err.message); });
+                    });
                 }
             },
             formatTime(timeStr) {
