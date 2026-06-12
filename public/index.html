@@ -51,13 +51,18 @@
         .form-group { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #eee; padding: 8px 0; }
         .form-label { width: 60px; color: #666; font-size: 13px; }
         .form-input { flex: 1; border: none; outline: none; font-size: 14px; padding: 4px; }
-        .form-textarea { flex: 1; height: 260px; border: 1px solid #ddd; padding: 10px; font-size: 14px; resize: none; outline: none; border-radius: 3px; }
 
-        /* 💡 附件展示区样式 */
-        .attachment-zone { background: #f8fafc; border: 1px dashed #cbd5e1; padding: 12px; border-radius: 6px; margin-top: 10px; }
-        .attachment-item { display: inline-flex; align-items: center; background: #fff; border: 1px solid #e2e8f0; padding: 4px 10px; border-radius: 4px; font-size: 12px; margin-right: 8px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        /* 💡 富文本编辑器工具栏样式（完美复刻截图功能） */
+        .editor-toolbar { display: flex; align-items: center; flex-wrap: wrap; background: #f8fafc; border: 1px solid #cbd5e1; border-bottom: none; padding: 6px; gap: 4px; border-top-left-radius: 6px; border-top-right-radius: 6px; }
+        .editor-btn { background: none; border: none; padding: 4px 8px; cursor: pointer; font-size: 13px; font-weight: 500; border-radius: 3px; color: #334155; }
+        .editor-btn:hover { background: #e2e8f0; }
+        .editor-select { border: 1px solid #cbd5e1; background: #fff; padding: 2px 4px; font-size: 12px; border-radius: 3px; outline: none; }
+        .editor-color-picker { width: 24px; height: 24px; border: none; background: none; cursor: pointer; padding: 0; }
+        .editor-container { flex: 1; border: 1px solid #cbd5e1; padding: 15px; font-size: 14px; overflow-y: auto; outline: none; background: #fff; min-height: 260px; border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; }
+
+        .attachment-zone { background: #f8fafc; border: 1px dashed #cbd5e1; padding: 12px; border-radius: 6px; margin-top: 5px; }
+        .attachment-item { display: inline-flex; align-items: center; background: #fff; border: 1px solid #e2e8f0; padding: 4px 10px; border-radius: 4px; font-size: 12px; margin-right: 8px; margin-bottom: 8px; }
         .btn-remove-file { margin-left: 8px; color: #ef4444; cursor: pointer; font-weight: bold; }
-        .btn-remove-file:hover { color: #b91c1c; }
     </style>
 </head>
 <body>
@@ -75,34 +80,27 @@
     <div class="main-container">
         <div class="sidebar">
             <button @click="switchToCompose" class="btn-write">📝 写信</button>
-            
             <div class="menu-item" :class="{ active: currentFilter === 'inbox' && viewMode === 'list' }" @click="changeFilter('inbox')">
                 <span>📁 收件箱</span>
                 <span class="menu-badge">{{ currentFilter === 'inbox' ? emails.length : '' }}</span>
             </div>
-            
             <div class="menu-item" :class="{ active: currentFilter === 'vip' && viewMode === 'list' }" @click="changeFilter('vip')">
                 <span>🔖 重要联系人</span>
             </div>
-            
             <div class="menu-item" :class="{ active: currentFilter === 'starred' && viewMode === 'list' }" @click="changeFilter('starred')">
                 <span>⭐ 星标邮件</span>
             </div>
-            
             <div class="menu-item" :class="{ active: currentFilter === 'group' && viewMode === 'list' }" @click="changeFilter('group')">
                 <span>👥 群邮件</span>
                 <span class="menu-count-grey">0</span>
             </div>
-            
             <div class="menu-item" :class="{ active: currentFilter === 'sent' && viewMode === 'list' }" @click="changeFilter('sent')">
                 <span>▲ 已发送</span>
                 <span class="menu-badge" style="color: #2b7ac6;">{{ currentFilter === 'sent' ? emails.length : '' }}</span>
             </div>
-            
             <div class="menu-item" :class="{ active: currentFilter === 'draft' && viewMode === 'list' }" @click="changeFilter('draft')">
                 <span>📄 草稿箱</span>
             </div>
-            
             <div class="menu-item" :class="{ active: currentFilter === 'trash' && viewMode === 'list' }" @click="changeFilter('trash')">
                 <span>🗑️ 已删除</span>
                 <span class="menu-badge" style="color: #888;">{{ currentFilter === 'trash' ? emails.length : '' }}</span>
@@ -140,8 +138,8 @@
             <template v-else-if="viewMode === 'read'">
                 <div class="toolbar">
                     <button class="btn-tool" @click="viewMode = 'list'">返回列表</button>
-                    <button class="btn-tool" @click="deleteMail(activeMail)" :style="currentFilter === 'trash' ? 'color: red; font-weight: bold;' : ''">
-                        {{ currentFilter === 'trash' ? '💥 彻底删除 (不可逆)' : '🗑️ 删除' }}
+                    <button class="btn-tool" @click="deleteMail(activeMail)">
+                        {{ currentFilter === 'trash' ? '💥 彻底删除' : '🗑️ 删除' }}
                     </button>
                 </div>
                 <div class="view-container">
@@ -153,7 +151,7 @@
                             <div><strong>时 间：</strong>{{ activeMail.received_at }}</div>
                         </div>
                     </div>
-                    <div class="mail-body">{{ activeMail.body_text }}</div>
+                    <div class="mail-body" v-html="activeMail.body_text"></div>
                 </div>
             </template>
 
@@ -175,15 +173,41 @@
                     </div>
                     
                     <div v-if="attachedFiles.length > 0" class="attachment-zone">
-                        <div style="font-size: 12px; color: #64748b; margin-bottom: 6px; font-weight: bold;">已添加附件：</div>
                         <div class="attachment-item" v-for="(file, index) in attachedFiles" :key="index">
                             <span>📄 {{ file.filename }} ({{ (file.size / 1024).toFixed(1) }} KB)</span>
                             <span class="btn-remove-file" @click="removeFile(index)">×</span>
                         </div>
                     </div>
 
-                    <div style="display: flex; flex: 1; margin-top: 10px;">
-                        <textarea v-model="composeData.content" class="form-textarea" placeholder="输入正文内容..."></textarea>
+                    <div style="display: flex; flex-direction: column; margin-top: 10px; flex: 1;">
+                        <div class="editor-toolbar">
+                            <select class="editor-select" @change="execEditorCommand('fontName', $event.target.value)">
+                                <option value="Arial">默认字体</option>
+                                <option value="Microsoft YaHei">微软雅黑</option>
+                                <option value="SimSun">宋体</option>
+                                <option value="Courier New">等宽字体</option>
+                            </select>
+                            <select class="editor-select" @change="execEditorCommand('fontSize', $event.target.value)">
+                                <option value="3">字号</option>
+                                <option value="2">小</option>
+                                <option value="4">中</option>
+                                <option value="6">大</option>
+                            </select>
+                            <div style="width: 1px; height: 16px; background: #cbd5e1; margin: 0 4px;"></div>
+                            <button class="editor-btn" style="font-weight: bold;" @click="execEditorCommand('bold')">B</button>
+                            <button class="editor-btn" style="font-style: italic;" @click="execEditorCommand('italic')">I</button>
+                            <button class="editor-btn" style="text-decoration: underline;" @click="execEditorCommand('underline')">U</button>
+                            <button class="editor-btn" style="text-decoration: line-through;" @click="execEditorCommand('strikeThrough')">S</button>
+                            <div style="width: 1px; height: 16px; background: #cbd5e1; margin: 0 4px;"></div>
+                            <span style="font-size: 12px; color: #64748b;">🎨 文本色:</span>
+                            <input type="color" class="editor-color-picker" @input="execEditorCommand('foreColor', $event.target.value)">
+                            <div style="width: 1px; height: 16px; background: #cbd5e1; margin: 0 4px;"></div>
+                            <button class="editor-btn" @click="execEditorCommand('insertUnorderedList')">• 列表</button>
+                            <button class="editor-btn" @click="execEditorCommand('justifyLeft')">⇐ 左对齐</button>
+                            <button class="editor-btn" @click="execEditorCommand('justifyCenter')">⇔ 居中</button>
+                            <button class="editor-btn" @click="execEditorCommand('justifyRight')">⇒ 右对齐</button>
+                        </div>
+                        <div class="editor-container" contenteditable="true" ref="editorBox"></div>
                     </div>
                 </div>
             </template>
@@ -206,13 +230,11 @@
             viewMode: 'list',
             emails: [],
             activeMail: null,
-            composeData: { to: '', subject: '', content: '' },
-            attachedFiles: [] // 💡 存放转换好 Base64 的附件数组
+            composeData: { to: '', subject: '' },
+            attachedFiles: []
         },
         created() {
-            if(localStorage.getItem('mail_username')) {
-                this.fetchEmails();
-            }
+            if(localStorage.getItem('mail_username')) { this.fetchEmails(); }
         },
         methods: {
             fetchEmails() {
@@ -228,61 +250,55 @@
                 this.fetchEmails();
             },
             switchToCompose() {
-                this.composeData = { to: '', subject: '', content: '' };
+                this.composeData = { to: '', subject: '' };
                 this.attachedFiles = [];
                 this.viewMode = 'compose';
+                this.$nextTick(() => { if(this.$refs.editorBox) this.$refs.editorBox.innerHTML = ''; });
             },
             readMail(mail) {
                 this.activeMail = mail;
                 this.viewMode = 'read';
             },
-            triggerFileInput() {
-                this.$refs.fileInput.click();
+            // 💡 运行富文本命令
+            execEditorCommand(cmd, value = null) {
+                document.execCommand(cmd, false, value);
             },
-            // 💡 附件核心技术段：抓取物理文件，利用 FileReader 绞碎切片为 Base64 文本
+            triggerFileInput() { this.$refs.fileInput.click(); },
             handleFileChange(event) {
                 const files = event.target.files;
                 for (let i = 0; i < files.length; i++) {
                     const file = files[i];
                     const reader = new FileReader();
-                    
                     reader.onload = (e) => {
-                        // e.target.result 的格式类似为 "data:image/png;base64,iVBORw0KGgo..."
-                        const rawResult = e.target.result;
-                        const base64Data = rawResult.split(',')[1]; // 精准截取真实的文本部分
-                        
                         this.attachedFiles.push({
                             filename: file.name,
-                            content: base64Data,
+                            content: e.target.result.split(',')[1],
                             size: file.size
                         });
                     };
-                    reader.readAsDataURL(file); // 触发 Base64 数据读取
+                    reader.readAsDataURL(file);
                 }
             },
-            removeFile(index) {
-                this.attachedFiles.splice(index, 1);
-            },
+            removeFile(index) { this.attachedFiles.splice(index, 1); },
             sendMail() {
-                if (!this.composeData.to || !this.composeData.content) {
-                    alert('请补全收件人和内容');
+                // 💡 提取富文本编辑器中的全量内嵌 HTML 源码数据
+                const richHtmlContent = this.$refs.editorBox.innerHTML;
+                if (!this.composeData.to || !richHtmlContent || richHtmlContent === '<br>') {
+                    alert('请补全收件人和正文内容');
                     return;
                 }
                 axios.post(`${API_BASE}/api/send`, {
                     from_user: this.username,
                     to_email: this.composeData.to,
-                    subject: this.composeData.subject,
-                    content: this.composeData.content,
-                    attachments: this.attachedFiles // 💡 顺带把切片完成的附件文本丢给后端
+                    subject: this.composeData.subject || '(无主题)',
+                    content: richHtmlContent, // 发送完美富文本 HTML 流
+                    attachments: this.attachedFiles
                 })
                 .then(res => {
                     alert(res.data.message || '发送成功！');
                     this.changeFilter('sent');
                 })
-                .catch(err => {
-                    const errMsg = err.response && err.response.data ? err.response.data.message : err.message;
-                    alert('发送遭遇失败: ' + errMsg);
-                });
+                .catch(err => { alert('发送失败: ' + (err.response ? err.response.data.message : err.message)); });
             },
             toggleStar(mail) {
                 const targetValue = mail.is_starred ? 0 : 1;
@@ -293,18 +309,10 @@
                 if (this.currentFilter === 'trash') {
                     if (!confirm('确定要永久删除该邮件吗？')) return;
                     axios.patch(`${API_BASE}/api/emails/status`, { id: mail.id, field: 'permanent_delete', value: 'true' })
-                    .then(() => {
-                        alert('邮件已永久粉碎！');
-                        this.viewMode = 'list';
-                        this.fetchEmails();
-                    });
+                    .then(() => { this.viewMode = 'list'; this.fetchEmails(); });
                 } else {
                     axios.patch(`${API_BASE}/api/emails/status`, { id: mail.id, field: 'execute_delete', value: this.username })
-                    .then(() => {
-                        alert('邮件已移入回收站！');
-                        this.viewMode = 'list';
-                        this.fetchEmails();
-                    });
+                    .then(() => { this.viewMode = 'list'; this.fetchEmails(); });
                 }
             },
             formatTime(timeStr) {
@@ -312,10 +320,7 @@
                 const date = new Date(timeStr);
                 return (date.getMonth() + 1) + '月' + date.getDate() + '日';
             },
-            logout() { 
-                localStorage.removeItem('mail_username');
-                window.location.href = '/login.html';
-            }
+            logout() { localStorage.removeItem('mail_username'); window.location.href = '/login.html'; }
         }
     });
 </script>

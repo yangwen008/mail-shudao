@@ -23,6 +23,7 @@ function safeDecodeBase64(base64Str) {
   }
 }
 
+// 外部收信脱水安全防线
 function stripHtmlTags(htmlStr) {
   if (!htmlStr) return "";
   let text = htmlStr;
@@ -35,7 +36,7 @@ function stripHtmlTags(htmlStr) {
 // ================= Worker 核心中央控制引擎 =================
 
 export default {
-  // 入口 1：处理外部向当前域投递进来的邮件（收信落库）
+  // 入口 1：处理外部向当前域投递进来的邮件（自动安全脱水收信）
   async email(message, env, ctx) {
     const to_address = message.to;
     const from_address = message.from;
@@ -83,7 +84,7 @@ export default {
     ).bind(to_address, from_address, subject, body_text).run();
   },
 
-  // 入口 2：多维数据交互
+  // 入口 2：多维数据接口
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const corsHeaders = {
@@ -95,14 +96,14 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
     const getJson = async () => { try { return await request.json(); } catch { return {}; } };
 
-    // API: 用户注册与登录
+    // API: 用户登录注册
     if (url.pathname === "/api/register" && request.method === "POST") {
       const { username, password } = await getJson();
       try {
         await env.DB.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").bind(username, password).run();
         return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
       } catch {
-        return new Response(JSON.stringify({ success: false, message: "用户已存在" }), { status: 400, headers: corsHeaders });
+        return new Response(JSON.stringify({ success: false, message: "凭证被占用" }), { status: 400, headers: corsHeaders });
       }
     }
     if (url.pathname === "/api/login" && request.method === "POST") {
@@ -169,14 +170,14 @@ export default {
       return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     }
 
-    // API: 发信中继（📎 升级：原生全量注入 Base64 附件，不占数据库体积直接外发）
+    // API: 发信中继（💡 升级：直接在外发请求中完美投递前端传来的富文本 HTML 流）
     if (url.pathname === "/api/send" && request.method === "POST") {
       try {
         const body = await getJson();
         const to_email = body.to_email || body.to;
         const subject = body.subject || "(无主题)";
-        const content = body.content || "";
-        const attachments = body.attachments || []; // 💡 提取前端送来的附件数组
+        const content = body.content || ""; // 这里接收的是带格式的 HTML 字符串
+        const attachments = body.attachments || [];
 
         let rawUser = "admin";
         if (body.from_user) rawUser = body.from_user.split('@')[0];
@@ -185,23 +186,21 @@ export default {
         const clean_user = rawUser.trim();
         const from_email = `${clean_user}@shudao.ai`;
 
-        if (!to_email || !content) return new Response("参数不全", { status: 400, headers: corsHeaders });
+        if (!to_email || !content) return new Response(JSON.stringify({ success: false, message: "参数不全" }), { status: 400, headers: corsHeaders });
         const apiKey = env.RESEND_API_KEY;
-        if (!apiKey) return new Response("缺失KEY", { status: 500, headers: corsHeaders });
+        if (!apiKey) return new Response(JSON.stringify({ success: false, message: "缺失KEY" }), { status: 500, headers: corsHeaders });
 
-        // 组装发给 Resend 的商业信包
         const resendPayload = {
           from: `${clean_user} <${from_email}>`,
           to: [to_email.trim()],
           subject: subject,
-          html: content
+          html: content // 💡 传给 Resend 的 html 字段，对方收到就是漂亮完整的网页格式邮件！
         };
 
-        // 💡 附件无缝对接：如果前端传了附件文本，顺理成章地塞进 Resend payload
         if (attachments && attachments.length > 0) {
           resendPayload.attachments = attachments.map(f => ({
             filename: f.filename,
-            content: f.content // Resend 官方原生秒懂 Base64
+            content: f.content
           }));
         }
 
@@ -212,17 +211,16 @@ export default {
         });
 
         if (resendResponse.ok) {
-          // 在发件箱留存备份时，为了不给你的 D1 带来存储负担，我们只留存纯文字主题和正文
-          const cleanSentBody = stripHtmlTags(content) + (attachments.length > 0 ? `\n\n[📎 包含 ${attachments.length} 个发送附件]` : '');
+          // 💡 为了让你的已发送箱也能预览你精心排版的富文本，我们这里直接原汁原味地存入 HTML 字符串！
           await env.DB.prepare(
             "INSERT INTO emails (to_address, from_address, subject, body_text) VALUES (?, ?, ?, ?)"
-          ).bind(to_email.trim(), from_email, subject, cleanSentBody).run();
+          ).bind(to_email.trim(), from_email, subject, content).run();
           
-          return new Response(JSON.stringify({ success: true, message: "邮件(包含附件)已发送成功！" }), { headers: corsHeaders });
+          return new Response(JSON.stringify({ success: true, message: "富文本邮件已成功投递外发！" }), { headers: corsHeaders });
         }
         return new Response(await resendResponse.text(), { status: 400, headers: corsHeaders });
       } catch (err) {
-        return new Response(err.message, { status: 500, headers: corsHeaders });
+        return new Response(JSON.stringify({ success: false, message: err.message }), { status: 500, headers: corsHeaders });
       }
     }
 
