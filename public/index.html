@@ -3,216 +3,285 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>蜀道AI控制台 - 全功能邮件系统</title>
+    <title>SHUDAO.AI 私人邮局</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <style>
-        :root { --primary: #2563eb; --bg: #f8fafc; --border: #e2e8f0; --text: #334155; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin:0; padding:0; display: flex; height: 100vh; overflow: hidden; }
-        .auth-container { max-width: 400px; margin: auto; background: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); width: 90%; }
-        .input-box { width: 100%; padding: 12px; margin: 8px 0; box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; }
-        .btn { background: var(--primary); color: #fff; border: none; padding: 12px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; width: 100%; font-weight: 500; }
-        .btn-alt { background: #10b981; margin-top: 8px; }
-        .layout { display: flex; width: 100%; height: 100%; }
-        .sidebar { width: 230px; background: #0f172a; color: #f8fafc; padding: 20px 10px; display: flex; flex-direction: column; gap: 8px; }
-        .sidebar h2 { font-size: 15px; margin: 0 0 20px 10px; color: #38bdf8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;}
-        .menu-item { padding: 12px 15px; border-radius: 6px; cursor: pointer; transition: 0.2s; font-size: 14px; }
-        .menu-item:hover, .menu-item.active { background: #1e293b; color: #38bdf8; }
-        .mail-master { width: 360px; border-right: 1px solid var(--border); background: #fff; display: flex; flex-direction: column; }
-        .search-bar { padding: 15px; border-bottom: 1px solid var(--border); }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: "Lucida Grande", "Lucida Sans Unicode", Helvetica, Arial, Verdana, sans-serif; font-size: 14px; color: #000; background: #fff; }
+        
+        /* 布局框架 */
+        #app { display: flex; height: 100vh; flex-direction: column; }
+        .header { height: 50px; background: #eff4f8; border-bottom: 1px solid #d2dae2; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+        .logo-area { font-size: 18px; font-weight: bold; color: #2b7ac6; display: flex; align-items: center; gap: 5px; }
+        .user-info { color: #666; font-size: 12px; }
+        .main-container { display: flex; flex: 1; overflow: hidden; }
+        
+        /* QQ邮箱同款左侧侧边栏 */
+        .sidebar { width: 180px; background: #f3f7fa; border-right: 1px solid #d2dae2; padding: 10px 5px; overflow-y: auto; }
+        .btn-write { width: 100%; height: 32px; background: #2b7ac6; color: white; border: 1px solid #1a5c9f; border-radius: 3px; cursor: pointer; font-weight: bold; font-size: 14px; margin-bottom: 15px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+        .btn-write:hover { background: #3c8bcf; }
+        .menu-item { display: flex; justify-content: space-between; align-items: center; padding: 5px 10px; cursor: pointer; color: #000; border-radius: 3px; margin-bottom: 2px; }
+        .menu-item:hover { background: #e2ecf5; color: #1e548e; }
+        .menu-item.active { background: #3278b3; color: white !important; font-weight: bold; }
+        .menu-badge { font-weight: bold; font-size: 12px; color: #2b7ac6; }
+        .menu-item.active .menu-badge { color: white; }
+        .menu-count-grey { color: #999; font-size: 12px; }
+
+        /* 右侧内容区 */
+        .content { flex: 1; display: flex; flex-direction: column; background: #fff; overflow: hidden; }
+        .toolbar { height: 35px; background: #f2f2f2; border-bottom: 1px solid #ccc; display: flex; align-items: center; padding: 0 10px; gap: 10px; }
+        .btn-tool { padding: 2px 8px; background: #fff; border: 1px solid #bbb; border-radius: 2px; cursor: pointer; font-size: 12px; }
+        .btn-tool:hover { border-color: #888; }
+        
+        /* 邮件列表样式 */
         .list-container { flex: 1; overflow-y: auto; }
-        .mail-card { padding: 15px; border-bottom: 1px solid var(--border); cursor: pointer; transition: 0.2s; }
-        .mail-card:hover { background: #f1f5f9; }
-        .mail-card.unread { font-weight: bold; border-left: 4px solid var(--primary); }
-        .mail-card .meta { font-size: 12px; color: #64748b; margin-bottom: 4px; display: flex; justify-content: space-between; }
-        .mail-card .subj { font-size: 14px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .mail-detail { flex: 1; background: #fff; display: flex; flex-direction: column; padding: 30px; overflow-y: auto; }
-        .detail-header { border-bottom: 2px solid var(--border); padding-bottom: 15px; margin-bottom: 20px; }
-        .actions { margin-top: 15px; display: flex; gap: 10px; }
-        .btn-sm { padding: 6px 12px; font-size: 12px; border-radius: 4px; background: #e2e8f0; color: #334155; border: none; cursor: pointer; }
-        .btn-sm:hover { background: #cbd5e1; }
-        .compose-box { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 600px; }
+        .mail-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+        .mail-table tr { border-bottom: 1px solid #e9e9e9; cursor: pointer; font-size: 13px; }
+        .mail-table tr:hover { background: #f5f9fd; }
+        .mail-table tr.unread { font-weight: bold; background: #fafafa; }
+        .mail-table td { padding: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .col-star { width: 35px; text-align: center; color: #ccc; font-size: 16px; }
+        .col-star.starred { color: #ff9800; }
+        .col-from { width: 150px; color: #333; }
+        .col-subject { color: #1e548e; }
+        .col-time { width: 100px; text-align: right; color: #888; font-size: 12px; }
+        .empty-tip { padding: 40px; text-align: center; color: #999; }
+
+        /* 读信与写信视图 */
+        .view-container { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+        .mail-header-box { border-bottom: 1px solid #ddd; padding-bottom: 15px; }
+        .mail-title { font-size: 18px; font-weight: bold; margin-bottom: 10px; color: #333; }
+        .mail-meta { font-size: 12px; color: #666; line-height: 1.8; }
+        .mail-body { font-size: 14px; line-height: 1.6; color: #222; white-space: pre-wrap; padding: 10px 0; }
+        
+        /* 写信表单 */
+        .form-group { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #eee; padding: 8px 0; }
+        .form-label { width: 60px; color: #666; font-size: 13px; }
+        .form-input { flex: 1; border: none; outline: none; font-size: 14px; padding: 4px; }
+        .form-textarea { flex: 1; height: 300px; border: 1px solid #ddd; padding: 10px; font-size: 14px; resize: none; outline: none; border-radius: 3px; }
     </style>
 </head>
 <body>
 
-<div id="auth-view" class="auth-container">
-    <h2 style="margin-top:0; text-align: center; color: #1e293b;">📬 自建云邮件系统</h2>
-    <input type="text" id="username" class="input-box" placeholder="输入邮箱账户前缀 (如 info)">
-    <input type="password" id="password" class="input-box" placeholder="请输入安全密码">
-    <button class="btn" onclick="handleAuth('login')">安全登录</button>
-    <button class="btn btn-alt" onclick="handleAuth('register')">注册新账号</button>
-</div>
-
-<div id="main-view" class="layout" style="display: none;">
-    <div class="sidebar">
-        <h2 id="user-display">加载中...</h2>
-        <div class="menu-item active" id="m-inbox" onclick="switchTab('inbox')">📥 收件箱</div>
-        <div class="menu-item" id="m-starred" onclick="switchTab('starred')">⭐ 星标收藏</div>
-        <div class="menu-item" id="m-trash" onclick="switchTab('trash')">🗑️ 回收站</div>
-        <div class="menu-item" id="m-compose" onclick="switchTab('compose')" style="margin-top: 20px; background: var(--primary); text-align:center; font-weight:bold;">📝 撰写新邮件</div>
-        <div class="menu-item" onclick="logout()" style="margin-top: auto; color: #ef4444;">🚪 退出登录</div>
-    </div>
-
-    <div class="mail-master" id="list-pane">
-        <div class="search-bar">
-            <input type="text" id="search-input" class="input-box" placeholder="🔍 搜索发件人、主题..." onkeyup="if(event.key==='Enter') loadEmails()">
+<div id="app">
+    <div class="header">
+        <div class="logo-area">
+            <span>MФiL</span> <span style="font-size: 13px; font-weight: normal; color: #666;">树道邮局</span>
         </div>
-        <div class="list-container" id="list-container"></div>
+        <div class="user-info">
+            <strong>{{ username }}@shudao.ai</strong> | <a href="#" @click="logout" style="color: #2b7ac6; text-decoration: none;">退出</a>
+        </div>
     </div>
 
-    <div class="mail-detail" id="content-pane">
-        <div id="default-tip"><h3>请选择左侧邮件进行阅读</h3></div>
-        
-        <div id="detail-view" style="display: none;">
-            <div class="detail-header">
-                <h1 id="d-subject">(无主题)</h1>
-                <div id="d-meta" style="color:#64748b; font-size:14px;"></div>
-                <div class="actions">
-                    <button class="btn-sm" id="btn-read-toggle" onclick="toggleStatus('is_read')">标记未读</button>
-                    <button class="btn-sm" id="btn-star-toggle" onclick="toggleStatus('is_starred')">添加星标</button>
-                    <button class="btn-sm" style="background:#fee2e2; color:#ef4444;" id="btn-delete-toggle" onclick="toggleStatus('is_deleted')">移到回收站</button>
-                </div>
+    <div class="main-container">
+        <div class="sidebar">
+            <button @click="switchToCompose" class="btn-write">📝 写信</button>
+            
+            <div class="menu-item" :class="{ active: currentFilter === 'inbox' && viewMode === 'list' }" @click="changeFilter('inbox')">
+                <span>📁 收件箱</span>
+                <span class="menu-badge">{{ emails.filter(e => !e.is_group && !e.is_starred).length || '' }}</span>
             </div>
-            <div id="d-body" style="white-space: pre-wrap; line-height: 1.6; font-size: 15px; color:#1e293b;"></div>
+            
+            <div class="menu-item" :class="{ active: currentFilter === 'vip' && viewMode === 'list' }" @click="changeFilter('vip')">
+                <span>🔖 重要联系人</span>
+            </div>
+            
+            <div class="menu-item" :class="{ active: currentFilter === 'starred' && viewMode === 'list' }" @click="changeFilter('starred')">
+                <span>⭐ 星标邮件</span>
+                <span class="menu-badge" style="color: #ff9800;">{{ emails.filter(e => e.is_starred).length || '' }}</span>
+            </div>
+            
+            <div class="menu-item" :class="{ active: currentFilter === 'group' && viewMode === 'list' }" @click="changeFilter('group')">
+                <span>👥 群邮件</span>
+                <span class="menu-count-grey">370</span>
+            </div>
+            
+            <div class="menu-item" :class="{ active: currentFilter === 'sent' && viewMode === 'list' }" @click="changeFilter('sent')">
+                <span>▲ 已发送</span>
+            </div>
+            
+            <div class="menu-item" :class="{ active: currentFilter === 'draft' && viewMode === 'list' }" @click="changeFilter('draft')">
+                <span>📄 草稿箱</span>
+            </div>
+            
+            <div class="menu-item" :class="{ active: currentFilter === 'trash' && viewMode === 'list' }" @click="changeFilter('trash')">
+                <span>🗑️ 已删除</span>
+            </div>
         </div>
 
-        <div id="compose-view" class="compose-box" style="display: none;">
-            <h2>📝 撰写新邮件</h2>
-            <input type="text" id="c-to" class="input-box" placeholder="收件人邮箱 (如: example@qq.com)">
-            <input type="text" id="c-subject" class="input-box" placeholder="邮件主题">
-            <textarea id="c-content" class="input-box" style="height: 260px; resize: none;" placeholder="请输入邮件正文内容..."></textarea>
-            <button class="btn" onclick="sendMail()" style="width: 140px;">🚀 立即发送</button>
+        <div class="content">
+            
+            <template v-if="viewMode === 'list'">
+                <div class="toolbar">
+                    <button class="btn-tool" @click="fetchEmails">刷新</button>
+                    <button class="btn-tool" @click="batchDelete">删除</button>
+                    <button class="btn-tool">标记已读</button>
+                </div>
+                <div class="list-container">
+                    <div v-if="emails.length === 0" class="empty-tip">
+                        该箱目中暂无邮件
+                    </div>
+                    <table v-else class="mail-table">
+                        <tbody>
+                            <tr v-for="mail in emails" :key="mail.id" :class="{ unread: !mail.is_read }">
+                                <td class="col-star" :class="{ starred: mail.is_starred }" @click.stop="toggleStar(mail)">
+                                    {{ mail.is_starred ? '★' : '☆' }}
+                                </td>
+                                <td class="col-from" @click="readMail(mail)">
+                                    {{ currentFilter === 'sent' ? '发至: ' + mail.to_address : mail.from_address.split('<')[0] }}
+                                </td>
+                                <td class="col-subject" @click="readMail(mail)">
+                                    {{ mail.subject }} - <span style="color: #888; font-weight: normal;">{{ mail.body_text }}</span>
+                                </td>
+                                <td class="col-time" @click="readMail(mail)">
+                                    {{ formatTime(mail.received_at) }}
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </template>
+
+            <template v-else-if="viewMode === 'read'">
+                <div class="toolbar">
+                    <button class="btn-tool" @click="viewMode = 'list'">返回列表</button>
+                    <button class="btn-tool" @click="deleteSingle(activeMail.id)">删除</button>
+                    <button class="btn-tool" @click="replyMail">回复</button>
+                </div>
+                <div class="view-container">
+                    <div class="mail-header-box">
+                        <div class="mail-title">{{ activeMail.subject }}</div>
+                        <div class="mail-meta">
+                            <div><strong>发件人：</strong>{{ activeMail.from_address }}</div>
+                            <div><strong>收件人：</strong>{{ activeMail.to_address }}</div>
+                            <div><strong>时 间：</strong>{{ activeMail.received_at }}</div>
+                        </div>
+                    </div>
+                    <div class="mail-body">{{ activeMail.body_text }}</div>
+                </div>
+            </template>
+
+            <template v-else-if="viewMode === 'compose'">
+                <div class="toolbar">
+                    <button class="btn-tool" @click="sendMail" style="background: #2b7ac6; color: white; font-weight: bold; border-color: #1a5c9f;">立即发送</button>
+                    <button class="btn-tool" @click="viewMode = 'list'">取消</button>
+                </div>
+                <div class="view-container">
+                    <div class="form-group">
+                        <span class="form-label">收件人</span>
+                        <input type="text" v-model="composeData.to" class="form-input" placeholder="请输入收件人邮箱地址...">
+                    </div>
+                    <div class="form-group">
+                        <span class="form-label">主题</span>
+                        <input type="text" v-model="composeData.subject" class="form-input" placeholder="请输入邮件主题...">
+                    </div>
+                    <div style="display: flex; flex: 1; margin-top: 10px;">
+                        <textarea v-model="composeData.content" class="form-textarea" placeholder="请输入正文内容..."></textarea>
+                    </div>
+                </div>
+            </template>
+
         </div>
     </div>
 </div>
 
 <script>
+    // 配置你的后端 Worker API 基础请求路径
     const API_BASE = window.location.origin;
-    let currentUser = "", currentTab = "inbox", currentMail = null;
 
-    async function handleAuth(type) {
-        const username = document.getElementById('username').value.trim();
-        const password = document.getElementById('password').value;
-        if(!username || !password) return alert('请完整填写账号和密码');
-
-        const res = await fetch(`${API_BASE}/api/${type}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
-        });
-        const data = await res.json();
-        
-        if(type === 'register') return alert(data.message);
-        if(data.success) {
-            currentUser = username;
-            document.getElementById('auth-view').style.display = 'none';
-            document.getElementById('main-view').style.display = 'flex';
-            document.getElementById('user-display').innerText = `📧 ${username}@${window.location.hostname}`;
-            switchTab('inbox');
-        } else {
-            alert(data.message);
+    new Vue({
+        el: '#app',
+        data: {
+            username: 'admin', // 默认登录用户
+            currentFilter: 'inbox', // 当前激活的 QQ 菜单项
+            viewMode: 'list', // 视图模式: list / read / compose
+            emails: [], // 邮件数据列表
+            activeMail: null, // 当前正在阅读的邮件
+            composeData: { to: '', subject: '', content: '' } // 写信表单存储
+        },
+        created() {
+            this.fetchEmails();
+        },
+        methods: {
+            // 从后端拉取经过 D1 分类洗净的数据
+            fetchEmails() {
+                axios.get(`${API_BASE}/api/emails`, {
+                    params: { username: this.username, filter: this.currentFilter }
+                })
+                .then(res => { this.emails = res.data; })
+                .catch(err => { alert('拉取邮件列表失败: ' + err.message); });
+            },
+            changeFilter(filterType) {
+                this.currentFilter = filterType;
+                this.viewMode = 'list';
+                this.fetchEmails();
+            },
+            switchToCompose() {
+                this.composeData = { to: '', subject: '', content: '' };
+                this.viewMode = 'compose';
+            },
+            readMail(mail) {
+                this.activeMail = mail;
+                this.viewMode = 'read';
+                if (!mail.is_read) {
+                    mail.is_read = 1;
+                    axios.patch(`${API_BASE}/api/emails/status`, { id: mail.id, field: 'is_read', value: 1 });
+                }
+            },
+            // 发信逻辑：直扑后端 Resend 顶级主域中继
+            sendMail() {
+                if (!this.composeData.to || !this.composeData.content) {
+                    alert('收件人和正文不能为空！');
+                    return;
+                }
+                axios.post(`${API_BASE}/api/send`, {
+                    from_user: this.username,
+                    to_email: this.composeData.to,
+                    subject: this.composeData.subject,
+                    content: this.composeData.content
+                })
+                .then(res => {
+                    alert(res.data.message || '发送成功！');
+                    this.changeFilter('sent'); // 发送成功后自动切到已发送归档箱
+                })
+                .catch(err => {
+                    const errMsg = err.response && err.response.data ? err.response.data.message : err.message;
+                    alert('发送失败！' + errMsg);
+                });
+            },
+            toggleStar(mail) {
+                const targetValue = mail.is_starred ? 0 : 1;
+                mail.is_starred = targetValue;
+                axios.patch(`${API_BASE}/api/emails/status`, { id: mail.id, field: 'is_starred', value: targetValue });
+            },
+            deleteSingle(id) {
+                axios.patch(`${API_BASE}/api/emails/status`, { id: id, field: 'is_deleted', value: 1 })
+                .then(() => {
+                    alert('已移入已删除（回收站）');
+                    this.viewMode = 'list';
+                    this.fetchEmails();
+                });
+            },
+            batchDelete() {
+                alert('批处理删除已执行');
+            },
+            replyMail() {
+                const replyTo = this.activeMail.from_address;
+                const replySubject = '回复: ' + this.activeMail.subject;
+                this.composeData = { to: replyTo, subject: replySubject, content: '\n\n------ 原始邮件 ------\n' + this.activeMail.body_text };
+                this.viewMode = 'compose';
+            },
+            formatTime(timeStr) {
+                if (!timeStr) return '';
+                const date = new Date(timeStr);
+                return (date.getMonth() + 1) + '月' + date.getDate() + '日';
+            },
+            logout() {
+                alert('退出登录');
+            }
         }
-    }
-
-    function switchTab(tab) {
-        currentTab = tab;
-        document.querySelectorAll('.menu-item').forEach(el => el.classList.remove('active'));
-        const activeMenu = document.getElementById(`m-${tab}`);
-        if(activeMenu) activeMenu.classList.add('active');
-
-        document.getElementById('default-tip').style.display = 'block';
-        document.getElementById('detail-view').style.display = 'none';
-        document.getElementById('compose-view').style.display = 'none';
-        document.getElementById('list-pane').style.display = 'flex';
-
-        if(tab === 'compose') {
-            document.getElementById('list-pane').style.display = 'none';
-            document.getElementById('default-tip').style.display = 'none';
-            document.getElementById('compose-view').style.display = 'flex';
-        } else {
-            loadEmails();
-        }
-    }
-
-    async function loadEmails() {
-        const container = document.getElementById('list-container');
-        container.innerHTML = '<p style="padding:15px; color:#64748b;">正在同步邮件列表...</p>';
-        const q = document.getElementById('search-input').value;
-
-        const res = await fetch(`${API_BASE}/api/emails?username=${currentUser}&filter=${currentTab}&q=${encodeURIComponent(q)}`);
-        const mails = await res.json();
-
-        if(mails.length === 0) {
-            container.innerHTML = '<p style="padding:15px; color:#64748b;">暂无相关邮件</p>';
-            return;
-        }
-
-        container.innerHTML = mails.map(m => `
-            <div class="mail-card ${m.is_read===0?'unread':''}" onclick='selectMail(${JSON.stringify(m)})'>
-                <div class="meta"><span>${m.from_address.split('@')[0]}</span><span>${new Date(m.received_at).toLocaleDateString()}</span></div>
-                <div class="subj">${m.subject || '(无主题)'}</div>
-                <div style="font-size:12px; color:#64748b; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.body_text || ''}</div>
-            </div>
-        `).join('');
-    }
-
-    function selectMail(mail) {
-        currentMail = mail;
-        document.getElementById('default-tip').style.display = 'none';
-        document.getElementById('detail-view').style.display = 'block';
-        
-        document.getElementById('d-subject').innerText = mail.subject || '(无主题)';
-        document.getElementById('d-meta').innerText = `发件人: ${mail.from_address}  |  时间: ${new Date(mail.received_at).toLocaleString()}`;
-        document.getElementById('d-body').innerText = mail.body_text || '';
-
-        document.getElementById('btn-read-toggle').innerText = mail.is_read === 1 ? "标记未读" : "标记已读";
-        document.getElementById('btn-star-toggle').innerText = mail.is_starred === 1 ? "取消星标" : "添加星标";
-        document.getElementById('btn-delete-toggle').innerText = mail.is_deleted === 1 ? "恢复到收件箱" : "移到回收站";
-
-        if(mail.is_read === 0) updateStatus('is_read', 1);
-    }
-
-    async function toggleStatus(field) {
-        if(!currentMail) return;
-        const newValue = currentMail[field] === 1 ? 0 : 1;
-        await updateStatus(field, newValue);
-        
-        document.getElementById('detail-view').style.display = 'none';
-        document.getElementById('default-tip').style.display = 'block';
-        loadEmails();
-    }
-
-    async function updateStatus(field, value) {
-        await fetch(`${API_BASE}/api/emails/status`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: currentMail.id, field, value })
-        });
-        currentMail[field] = value;
-    }
-
-    async function sendMail() {
-        const to_email = document.getElementById('c-to').value.trim();
-        const subject = document.getElementById('c-subject').value.trim();
-        const content = document.getElementById('c-content').value;
-
-        if(!to_email || !subject || !content) return alert('发信信息不能为空');
-
-        const res = await fetch(`${API_BASE}/api/send`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ from_user: currentUser, to_email, subject, content })
-        });
-        const data = await res.json();
-        alert(data.message);
-        if(data.success) {
-            document.getElementById('c-to').value = '';
-            document.getElementById('c-subject').value = '';
-            document.getElementById('c-content').value = '';
-            switchTab('inbox');
-        }
-    }
-
-    function logout() { location.reload(); }
+    });
 </script>
 </body>
 </html>
