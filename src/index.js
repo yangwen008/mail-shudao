@@ -78,13 +78,12 @@ export default {
       body_text = `[邮件解析异常]: ${err.message}`;
     }
 
-    // 只写入数据库中绝对存在的 4 个核心列，100% 拒绝任何报错
     await env.DB.prepare(
       "INSERT INTO emails (to_address, from_address, subject, body_text) VALUES (?, ?, ?, ?)"
     ).bind(to_address, from_address, subject, body_text).run();
   },
 
-  // 入口 2：多维数据兼容路由
+  // 入口 2：多维数据交互
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const corsHeaders = {
@@ -103,52 +102,83 @@ export default {
         await env.DB.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").bind(username, password).run();
         return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
       } catch {
-        return new Response(JSON.stringify({ success: false, message: "该用户已被注册" }), { status: 400, headers: corsHeaders });
+        return new Response(JSON.stringify({ success: false, message: "建立用户凭证故障" }), { status: 400, headers: corsHeaders });
       }
     }
     if (url.pathname === "/api/login" && request.method === "POST") {
       const { username, password } = await getJson();
       const user = await env.DB.prepare("SELECT * FROM users WHERE username = ? AND password_hash = ?").bind(username, password).first();
       if (user) return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
-      return new Response(JSON.stringify({ success: false, message: "密码校验错误" }), { status: 401, headers: corsHeaders });
+      return new Response(JSON.stringify({ success: false }), { status: 401, headers: corsHeaders });
     }
 
-    // API: 获取邮件列表
+    // API: 获取邮件列表（影子路由分流机制）
     if (url.pathname === "/api/emails" && request.method === "GET") {
       const username = url.searchParams.get("username");
       const filter = url.searchParams.get("filter") || "inbox";
       const userAddress = `${username}@shudao.ai`;
+      const deletedAddress = `${username}_deleted@shudao.ai`;
 
       let sql = "";
       let params = [];
 
-      if (filter === "sent") {
-        sql = "SELECT * FROM emails WHERE from_address LIKE ? ORDER BY received_at DESC";
-        params.push(`%${userAddress}%`);
+      if (filter === "trash") {
+        // 🗑️ 已删除箱：精准捞出包含 _deleted 影子后缀的所有历史数据
+        sql = "SELECT * FROM emails WHERE to_address = ? OR from_address = ? ORDER BY received_at DESC";
+        params.push(deletedAddress, deletedAddress);
+      } else if (filter === "sent") {
+        // ▲ 已发送箱：发件人是我，收件人不是 _deleted 的归档数据
+        sql = "SELECT * FROM emails WHERE from_address = ? AND to_address NOT LIKE '%_deleted%' ORDER BY received_at DESC";
+        params.push(userAddress);
       } else if (filter === "starred" || filter === "vip") {
-        sql = "SELECT * FROM emails WHERE to_address LIKE ? AND is_starred = 1 ORDER BY received_at DESC";
-        params.push(`%${userAddress}%`);
+        // ⭐ 星标箱
+        sql = "SELECT * FROM emails WHERE to_address = ? AND is_starred = 1 ORDER BY received_at DESC";
+        params.push(userAddress);
       } else {
-        sql = "SELECT * FROM emails WHERE to_address LIKE ? AND from_address NOT LIKE ? ORDER BY received_at DESC";
-        params.push(`%${userAddress}%`, `%${userAddress}%`);
+        // 📁 收件箱：发给我的，且没有被影子删除污染的
+        sql = "SELECT * FROM emails WHERE to_address = ? AND from_address NOT LIKE ? ORDER BY received_at DESC";
+        params.push(userAddress, `%${username}%`);
       }
 
       try {
         const { results } = await env.DB.prepare(sql).bind(...params).all();
         return new Response(JSON.stringify(results), { headers: corsHeaders });
       } catch (dbErr) {
-        return new Response(JSON.stringify({ success: false, message: `D1底层错误: ${dbErr.message}` }), { status: 500, headers: corsHeaders });
+        return new Response(JSON.stringify({ success: false, message: dbErr.message }), { status: 500, headers: corsHeaders });
       }
     }
 
-    // API: 修改状态
+    // API: 修改状态与影子删除/永久删除分流网关
     if (url.pathname === "/api/emails/status" && request.method === "PATCH") {
       const { id, field, value } = await getJson();
+      
+      // 💡 核心绝杀 1：彻底粉碎、永久从服务器抹除数据记录（回收站内的终极销毁）
+      if (field === 'permanent_delete') {
+        await env.DB.prepare("DELETE FROM emails WHERE id = ?").bind(id).run();
+        return new Response(JSON.stringify({ success: true, message: "记录已物理清空" }), { headers: corsHeaders });
+      }
+
+      // 💡 核心绝杀 2：一阶普通软删除（将地址后缀追加 _deleted 移入回收站）
+      if (field === 'execute_delete') {
+        const targetUser = value.trim();
+        const currentMail = await env.DB.prepare("SELECT * FROM emails WHERE id = ?").bind(id).first();
+        if (currentMail) {
+          let updateField = "to_address";
+          let newAddress = `${targetUser}_deleted@shudao.ai`;
+          if (currentMail.from_address.includes(targetUser)) {
+            updateField = "from_address";
+          }
+          await env.DB.prepare(`UPDATE emails SET ${updateField} = ? WHERE id = ?`).bind(newAddress, id).run();
+          return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+        }
+      }
+
+      // 基础属性状态修改（如加星标）
       await env.DB.prepare(`UPDATE emails SET ${field} = ? WHERE id = ?`).bind(value, id).run();
       return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     }
 
-    // API: 发信中继（落库层不带多余字段，绝对安全安全）
+    // API: 发信中继与本地记录生成
     if (url.pathname === "/api/send" && request.method === "POST") {
       try {
         const body = await getJson();
@@ -163,12 +193,9 @@ export default {
         const clean_user = rawUser.trim();
         const from_email = `${clean_user}@shudao.ai`;
 
-        if (!to_email || !content) {
-          return new Response(JSON.stringify({ success: false, message: "参数不全" }), { status: 400, headers: corsHeaders });
-        }
-
+        if (!to_email || !content) return new Response("参数不全", { status: 400, headers: corsHeaders });
         const apiKey = env.RESEND_API_KEY;
-        if (!apiKey) return new Response(JSON.stringify({ success: false, message: "缺失 RESEND_API_KEY" }), { status: 500, headers: corsHeaders });
+        if (!apiKey) return new Response("缺失KEY", { status: 500, headers: corsHeaders });
 
         const resendResponse = await fetch("https://api.resend.com/emails", {
           method: "POST",
@@ -183,18 +210,14 @@ export default {
 
         if (resendResponse.ok) {
           const cleanSentBody = stripHtmlTags(content);
-          
-          // 静默落库备份，字段只有 4 个，完美兼容
           await env.DB.prepare(
             "INSERT INTO emails (to_address, from_address, subject, body_text) VALUES (?, ?, ?, ?)"
           ).bind(to_email.trim(), from_email, subject, cleanSentBody).run();
-
-          return new Response(JSON.stringify({ success: true, message: "邮件已发送，并成功记入发件箱！" }), { headers: corsHeaders });
+          return new Response(JSON.stringify({ success: true, message: "发送成功！" }), { headers: corsHeaders });
         }
-        const resText = await resendResponse.text();
-        return new Response(JSON.stringify({ success: false, message: resText }), { status: 400, headers: corsHeaders });
+        return new Response(await resendResponse.text(), { status: 400, headers: corsHeaders });
       } catch (err) {
-        return new Response(JSON.stringify({ success: false, message: err.message }), { status: 500, headers: corsHeaders });
+        return new Response(err.message, { status: 500, headers: corsHeaders });
       }
     }
 

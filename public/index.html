@@ -99,6 +99,7 @@
             
             <div class="menu-item" :class="{ active: currentFilter === 'trash' && viewMode === 'list' }" @click="changeFilter('trash')">
                 <span>🗑️ 已删除</span>
+                <span class="menu-badge" style="color: #888;">{{ currentFilter === 'trash' ? emails.length : '' }}</span>
             </div>
         </div>
 
@@ -106,7 +107,6 @@
             <template v-if="viewMode === 'list'">
                 <div class="toolbar">
                     <button class="btn-tool" @click="fetchEmails">刷新</button>
-                    <button class="btn-tool" @click="mockDelete">删除</button>
                 </div>
                 <div class="list-container">
                     <div v-if="emails.length === 0" class="empty-tip">暂无邮件</div>
@@ -117,7 +117,7 @@
                                     {{ mail.is_starred ? '★' : '☆' }}
                                 </td>
                                 <td class="col-from" @click="readMail(mail)">
-                                    {{ currentFilter === 'sent' ? '投递至: ' + mail.to_address : mail.from_address }}
+                                    {{ currentFilter === 'sent' ? '投递至: ' + mail.to_address.replace('_deleted', '') : (mail.from_address ? mail.from_address.replace('_deleted', '') : '') }}
                                 </td>
                                 <td class="col-subject" @click="readMail(mail)">
                                     {{ mail.subject }} - <span style="color: #888; font-weight: normal;">{{ mail.body_text }}</span>
@@ -134,14 +134,16 @@
             <template v-else-if="viewMode === 'read'">
                 <div class="toolbar">
                     <button class="btn-tool" @click="viewMode = 'list'">返回列表</button>
-                    <button class="btn-tool" @click="mockDelete">删除</button>
+                    <button class="btn-tool" @click="deleteMail(activeMail)" :style="currentFilter === 'trash' ? 'color: red; font-weight: bold;' : ''">
+                        {{ currentFilter === 'trash' ? '💥 彻底删除 (不可逆)' : '🗑️ 删除' }}
+                    </button>
                 </div>
                 <div class="view-container">
                     <div class="mail-header-box">
                         <div class="mail-title">{{ activeMail.subject }}</div>
                         <div class="mail-meta">
-                            <div><strong>发件人：</strong>{{ activeMail.from_address }}</div>
-                            <div><strong>收件人：</strong>{{ activeMail.to_address }}</div>
+                            <div><strong>发件人：</strong>{{ activeMail.from_address.replace('_deleted', '') }}</div>
+                            <div><strong>收件人：</strong>{{ activeMail.to_address.replace('_deleted', '') }}</div>
                             <div><strong>时 间：</strong>{{ activeMail.received_at }}</div>
                         </div>
                     </div>
@@ -175,7 +177,6 @@
 <script>
     const API_BASE = window.location.origin;
 
-    // 🔒 建立安全拦截，未登录直接踢回登录页
     if (!localStorage.getItem('mail_username')) {
         window.location.href = '/login.html';
     }
@@ -241,8 +242,38 @@
                 mail.is_starred = targetValue;
                 axios.patch(`${API_BASE}/api/emails/status`, { id: mail.id, field: 'is_starred', value: targetValue });
             },
-            mockDelete() {
-                alert('兼容模式下，删除建议直接去 Cloudflare D1 库物理清空。');
+            // 💡 双阶删除融合判定
+            deleteMail(mail) {
+                if (this.currentFilter === 'trash') {
+                    // 阶梯 2：如果已经在回收站，执行永久清除命令（物理粉碎）
+                    if (!confirm('警告：此操作将在服务器上物理擦除该邮件，属于不可逆操作！确定要永久删除吗？')) {
+                        return;
+                    }
+                    axios.patch(`${API_BASE}/api/emails/status`, { 
+                        id: mail.id, 
+                        field: 'permanent_delete', 
+                        value: 'true' 
+                    })
+                    .then(() => {
+                        alert('邮件已从底层数据库永久粉碎！');
+                        this.viewMode = 'list';
+                        this.fetchEmails();
+                    })
+                    .catch(err => { alert('永久删除失败: ' + err.message); });
+                } else {
+                    // 阶梯 1：普通箱中点击，执行移入回收站命令
+                    axios.patch(`${API_BASE}/api/emails/status`, { 
+                        id: mail.id, 
+                        field: 'execute_delete', 
+                        value: this.username 
+                    })
+                    .then(() => {
+                        alert('邮件已成功移入已删除（回收站）！');
+                        this.viewMode = 'list';
+                        this.fetchEmails();
+                    })
+                    .catch(err => { alert('删除失败: ' + err.message); });
+                }
             },
             formatTime(timeStr) {
                 if (!timeStr) return '';
