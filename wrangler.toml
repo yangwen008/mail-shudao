@@ -14,3 +14,7 @@ database_id = "a7fa2821-79a8-4e50-bc38-ccc3281b0107"
 [vars]
 ALLOWED_DOMAINS = "shudao.ai"
 DOMAINS = "shudao.ai"
+
+send_email = [
+  { name = "SEND_EMAIL" }
+]
