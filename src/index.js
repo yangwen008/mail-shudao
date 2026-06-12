@@ -121,3 +121,74 @@ export default {
     return new Response("Not Found", { status: 404 });
   }
 };
+// ================= 缺失的核心发信处理函数 =================
+async function handleSendEmail(request, env) {
+  // 1. 跨域预检请求（OPTIONS）直接放行
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      },
+    });
+  }
+
+  if (request.method !== "POST") {
+    return new Response(JSON.stringify({ error: "Method Not Allowed" }), { 
+      status: 405, 
+      headers: { "Content-Type": "application/json" } 
+    });
+  }
+
+  try {
+    // 2. 解析前端传过来的数据
+    const body = await request.json();
+    const { from, to, subject, content } = body;
+
+    if (!from || !to || !subject || !content) {
+      return new Response(JSON.stringify({ error: "缺少发信必要参数" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // 3. 构造 Mailchannels 官方标准发信请求体
+    const mailChannelsPayload = {
+      personalizations: [{ to: [{ email: to.trim() }] }],
+      from: {
+        email: from.trim(),      // 你的账号，如 admin@shudao.ai
+        name: from.split('@')[0] // 自动截取前缀作为发件人名字
+      },
+      subject: subject,
+      content: [{ type: "text/html", value: content }]
+    };
+
+    // 4. 投递给 Mailchannels 免费网关
+    const mcResponse = await fetch("https://api.mailchannels.net/tx/v1/send", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(mailChannelsPayload),
+    });
+
+    const responseText = await mcResponse.text();
+    
+    if (mcResponse.status === 202 || mcResponse.status === 200) {
+      return new Response(JSON.stringify({ success: true, message: "发送成功！" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+      });
+    } else {
+      return new Response(JSON.stringify({ error: `Mailchannels 错误: ${responseText}` }), {
+        status: mcResponse.status,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+      });
+    }
+
+  } catch (err) {
+    return new Response(JSON.stringify({ error: `Worker 内部崩溃: ${err.message}` }), {
+      status: 500,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+    });
+  }
+}
