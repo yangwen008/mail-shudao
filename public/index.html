@@ -52,7 +52,6 @@
         .form-label { width: 60px; color: #666; font-size: 13px; }
         .form-input { flex: 1; border: none; outline: none; font-size: 14px; padding: 4px; }
 
-        /* 💡 富文本编辑器工具栏样式（完美复刻截图功能） */
         .editor-toolbar { display: flex; align-items: center; flex-wrap: wrap; background: #f8fafc; border: 1px solid #cbd5e1; border-bottom: none; padding: 6px; gap: 4px; border-top-left-radius: 6px; border-top-right-radius: 6px; }
         .editor-btn { background: none; border: none; padding: 4px 8px; cursor: pointer; font-size: 13px; font-weight: 500; border-radius: 3px; color: #334155; }
         .editor-btn:hover { background: #e2e8f0; }
@@ -138,6 +137,9 @@
             <template v-else-if="viewMode === 'read'">
                 <div class="toolbar">
                     <button class="btn-tool" @click="viewMode = 'list'">返回列表</button>
+                    
+                    <button v-if="currentFilter === 'sent' || currentFilter === 'draft'" class="btn-tool" @click="editAgain(activeMail)" style="background: #e2ecf5; color: #1e548e; font-weight: bold;">📝 再次编辑</button>
+                    
                     <button class="btn-tool" @click="deleteMail(activeMail)">
                         {{ currentFilter === 'trash' ? '💥 彻底删除' : '🗑️ 删除' }}
                     </button>
@@ -259,7 +261,23 @@
                 this.activeMail = mail;
                 this.viewMode = 'read';
             },
-            // 💡 运行富文本命令
+            // 💡 再次编辑的核心状态注入函数
+            editAgain(mail) {
+                // 1. 回填收件人、主题
+                this.composeData = {
+                    to: mail.to_address.replace('_deleted', ''),
+                    subject: mail.subject
+                };
+                this.attachedFiles = [];
+                // 2. 切到写信模式
+                this.viewMode = 'compose';
+                // 3. 异步回填富文本内容，保证 ref 已经挂载
+                this.$nextTick(() => {
+                    if (this.$refs.editorBox) {
+                        this.$refs.editorBox.innerHTML = mail.body_text;
+                    }
+                });
+            },
             execEditorCommand(cmd, value = null) {
                 document.execCommand(cmd, false, value);
             },
@@ -281,7 +299,6 @@
             },
             removeFile(index) { this.attachedFiles.splice(index, 1); },
             sendMail() {
-                // 💡 提取富文本编辑器中的全量内嵌 HTML 源码数据
                 const richHtmlContent = this.$refs.editorBox.innerHTML;
                 if (!this.composeData.to || !richHtmlContent || richHtmlContent === '<br>') {
                     alert('请补全收件人和正文内容');
@@ -291,7 +308,7 @@
                     from_user: this.username,
                     to_email: this.composeData.to,
                     subject: this.composeData.subject || '(无主题)',
-                    content: richHtmlContent, // 发送完美富文本 HTML 流
+                    content: richHtmlContent,
                     attachments: this.attachedFiles
                 })
                 .then(res => {
