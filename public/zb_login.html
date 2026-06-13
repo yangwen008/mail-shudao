@@ -72,11 +72,6 @@
                         <span style="color:#e2e8f0; font-weight:600;">[拦截成功]</span> {{ item.title }}
                         <div class="ticker-time">{{ item.time }}</div>
                     </div>
-                    <div class="ticker-item" v-for="item in tickerData">
-                        <span class="ticker-tag" :class="item.cls">{{ item.tag }}</span>
-                        <span style="color:#e2e8f0; font-weight:600;">[拦截成功]</span> {{ item.title }}
-                        <div class="ticker-time">{{ item.time }}</div>
-                    </div>
                 </div>
             </div>
             <div style="font-size: 11px; color: #475569; z-index: 10;">
@@ -122,8 +117,7 @@
             formData: { username: '', password: '' },
             tickerData: [
                 { tag: '🖥️ IT新基建', cls: 'tag-it', title: '蜀道集团数据中枢智算集群扩容项目公告', time: '1分钟前' },
-                { tag: '🎨 工业设计', cls: 'tag-design', title: '中铁鲁班网BIM三维建模及工程图纸校对智算接口采购', time: '4分钟前' },
-                { tag: '🏗️ 传统土建', cls: 'tag-construct', title: '成渝高速分包路段劳务协作队招募挂网公告', time: '8分钟前' }
+                { tag: '🎨 工业设计', cls: 'tag-design', title: '中铁鲁班网BIM三维建模及工程图纸校对智算接口采购', time: '4分钟前' }
             ]
         },
         methods: {
@@ -138,18 +132,17 @@
                 .then(res => {
                     this.loading = false;
                     if (this.isRegisterMode) {
-                        alert('蜀道AI大一统凭证创建成功！请直接点击登录。');
+                        alert('蜀道AI大一统凭证创建成功！请登录。');
                         this.isRegisterMode = false;
                     } else {
                         localStorage.setItem('mail_username', this.formData.username.trim());
-                        // 🛠️ 核心绝杀修改：搬正轨道，直接重定向到具备强路由拦截的 /dashboard.html 路径
-                        window.location.href = '/dashboard.html'; 
+                        // 🛠️ 终极对齐：直接进入绝对静态文件路径，绕过一切模糊匹配
+                        window.location.href = '/zb_index.html'; 
                     }
                 })
                 .catch(err => {
                     this.loading = false;
-                    const errMsg = err.response && err.response.data && err.response.data.message ? err.response.data.message : '中继拦截异常';
-                    alert((this.isRegisterMode ? '注册失败：' : '鉴权失败：') + errMsg);
+                    alert('鉴权失败：' + (err.response && err.response.data && err.response.data.message ? err.response.data.message : '中继拦截异常'));
                 });
             }
         }
