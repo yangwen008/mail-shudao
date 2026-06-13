@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>身份验证 - 蜀道AI招标雷达</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body, html { 
+            height: 100%; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0f172a;
+            color: #f8fafc;
+            overflow: hidden;
+        }
+        /* 🔒 核心保险：Vue 未接管前大括号和源码绝对不闪现 */
+        [v-cloak] { display: none !important; }
+
+        .login-wrapper { display: flex; height: 100vh; width: 100vw; position: relative; }
+
+        /* 📡 左侧 40%：量子级实时标讯战报舱 */
+        .ticker-panel {
+            width: 40%;
+            background: linear-gradient(145deg, #020617 0%, #0f172a 100%);
+            border-right: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 40px;
+            position: relative;
+            overflow: hidden;
+        }
+        .ticker-header { z-index: 10; }
+        .ticker-brand { font-size: 22px; font-weight: 900; color: #3b82f6; letter-spacing: 2px; }
+        .ticker-sub { font-size: 11px; color: #64748b; letter-spacing: 3px; text-transform: uppercase; margin-top: 4px; }
+        
+        /* 战报无限滚动流容器 */
+        .ticker-container {
+            flex: 1;
+            margin: 40px 0;
+            overflow: hidden;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+        .ticker-container::after {
+            content: ''; position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+            background: linear-gradient(to bottom, #020617 0%, transparent 15%, transparent 85%, #020617 100%);
+            pointer-events: none;
+        }
+        .ticker-track { display: flex; flex-direction: column; gap: 12px; animation: scrollUp 25s linear infinite; }
+        .ticker-item {
+            background: rgba(30, 41, 59, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            padding: 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .ticker-tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; margin-bottom: 6px; margin-right: 6px; }
+        .tag-it { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+        .tag-design { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
+        .tag-construct { background: rgba(71, 85, 105, 0.3); color: #94a3b8; }
+        .ticker-time { color: #475569; font-size: 11px; float: right; margin-top: 2px; }
+
+        /* 🔐 右侧 60%：流光毛玻璃凭证锁死卡片 */
+        .form-panel {
+            width: 60%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            background: radial-gradient(circle at 70% 30%, rgba(37, 99, 235, 0.08) 0%, transparent 60%);
+        }
+        .login-card {
+            width: 440px;
+            padding: 45px;
+            background: rgba(30, 41, 59, 0.55);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+        .form-title { font-size: 24px; font-weight: 800; color: #fff; margin-bottom: 30px; text-align: center; letter-spacing: 1px; }
+        .form-group { position: relative; margin-bottom: 22px; }
+        .form-label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 8px; font-weight: 600; }
+        .input-wrapper { position: relative; display: flex; align-items: center; }
+        .form-input { width: 100%; padding: 12px 16px; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; color: #fff; font-size: 15px; outline: none; transition: all 0.25s; }
+        .form-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15); background: rgba(15, 23, 42, 0.8); }
+        .suffix-tag { position: absolute; right: 16px; color: #475569; font-size: 14px; font-weight: 700; pointer-events: none; }
+        
+        .btn-primary { width: 100%; padding: 14px; background: linear-gradient(90deg, #2563eb 0%, #1d4ed8 100%); color: #fff; border: none; border-radius: 8px; font-size: 16px; font-weight: 700; cursor: pointer; transition: all 0.2s; margin-top: 10px; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2); }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(37, 99, 235, 0.3); opacity: 0.95; }
+        .card-footer { margin-top: 25px; text-align: center; font-size: 13px; color: #64748b; }
+        .card-footer a { color: #60a5fa; text-decoration: none; font-weight: 500; margin-left: 5px; }
+        .card-footer a:hover { color: #93c5fd; text-decoration: underline; }
+
+        /* 战报滚动无缝动画 */
+        @keyframes scrollUp {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(-50%); }
+        }
+    </style>
+</head>
+<body>
+
+<div id="app" v-cloak>
+    <div class="login-wrapper">
+        
+        <div class="ticker-panel">
+            <div class="ticker-header">
+                <div class="ticker-brand">MФiL RADAR</div>
+                <div class="ticker-sub">全网招采情报跨维拦截网</div>
+            </div>
+
+            <div class="ticker-container">
+                <div class="ticker-track">
+                    <div class="ticker-item" v-for="item in tickerData">
+                        <span class="ticker-tag" :class="item.cls">{{ item.tag }}</span>
+                        <span style="color:#e2e8f0; font-weight:600;">[拦截成功]</span> {{ item.title }}
+                        <div class="ticker-time">{{ item.time }}</div>
+                    </div>
+                    <div class="ticker-item" v-for="item in tickerData">
+                        <span class="ticker-tag" :class="item.cls">{{ item.tag }}</span>
+                        <span style="color:#e2e8f0; font-weight:600;">[拦截成功]</span> {{ item.title }}
+                        <div class="ticker-time">{{ item.time }}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="font-size: 11px; color: #475569; z-index: 10;">
+                © 2026 SHUDAO.AI MAIL & RADAR SYSTEM. ALL RIGHTS RESERVED.
+            </div>
+        </div>
+
+        <div class="form-panel">
+            <div class="login-card">
+                <h1 class="form-title">{{ isRegisterMode ? '建立雷达新凭证' : '雷达中枢安全登录' }}</h1>
+
+                <form @submit.prevent="handleSubmit">
+                    <div class="form-group">
+                        <label class="form-label">通行证账号 (安全邮局账号前缀)</label>
+                        <div class="input-wrapper">
+                            <input type="text" v-model="formData.username" class="form-input" placeholder="请输入用户名" required style="padding-right: 115px;">
+                            <span class="suffix-tag">@shudao.ai</span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">安全密码凭证</label>
+                        <input type="password" v-model="formData.password" class="form-input" placeholder="请输入安全密码" required>
+                    </div>
+
+                    <button type="submit" class="btn-primary" :disabled="loading">
+                        {{ loading ? '正在校验边缘网络通道...' : (isRegisterMode ? '生成权限凭证 (注册)' : '安全进入中枢') }}
+                    </button>
+                </form>
+
+                <div class="card-footer">
+                    <span>{{ isRegisterMode ? '已有雷达系统账号?' : '还没有雷达通行证?' }}</span>
+                    <a href="#" @click.prevent="isRegisterMode = !isRegisterMode">
+                        {{ isRegisterMode ? '立即登录' : '注册新账号' }}
+                    </a>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script>
+    const API_BASE = window.location.origin;
+
+    new Vue({
+        el: '#app',
+        data: {
+            isRegisterMode: false,
+            loading: false,
+            formData: { username: '', password: '' },
+            // 逼格战报假数据流：展示大厂的采摘战绩
+            tickerData: [
+                { tag: '🖥️ IT新基建', cls: 'tag-it', title: '蜀道集团数据中枢智算集群扩容项目公告', time: '1分钟前' },
+                { tag: '🎨 工业设计', cls: 'tag-design', title: '中铁鲁班网BIM三维建模及工程图纸校对智算接口采购', time: '4分钟前' },
+                { tag: '🏗️ 传统土建', cls: 'tag-construct', title: '成渝高速分包路段劳务协作队招募挂网公告', time: '8分钟前' },
+                { tag: '🖥️ IT新基建', cls: 'tag-it', title: '蜀道集采平台网络安全态势感知重保系统询价公告', time: '12分钟前' },
+                { tag: '🎨 工业设计', cls: 'tag-design', title: '信息系统顶层架构与人机交互UI/UX视觉设计公开招标', time: '15分钟前' },
+                { tag: '🏗️ 传统土建', cls: 'tag-construct', title: '中铁十一局集团四川段隧道掘进钢材大宗集采需求', time: '21分钟前' }
+            ]
+        },
+        methods: {
+            handleSubmit() {
+                if (this.loading) return;
+                this.loading = true;
+                const targetPath = this.isRegisterMode ? '/api/register' : '/api/login';
+                
+                axios.post(`${API_BASE}${targetPath}`, {
+                    username: this.formData.username.trim(),
+                    password: this.formData.password
+                })
+                .then(res => {
+                    this.loading = false;
+                    if (this.isRegisterMode) {
+                        alert('蜀道AI大一统凭证创建成功！系统已自动开通雷达通行权限，请直接点击登录。');
+                        this.isRegisterMode = false;
+                    } else {
+                        // 统一锁死核心通行凭证
+                        localStorage.setItem('mail_username', this.formData.username.trim());
+                        window.location.href = '/index.html'; 
+                    }
+                })
+                .catch(err => {
+                    this.loading = false;
+                    const errMsg = err.response && err.response.data && err.response.data.message ? err.response.data.message : '中继拦截异常';
+                    alert((this.isRegisterMode ? '注册失败：' : '鉴权失败：') + errMsg);
+                });
+            }
+        }
+    });
+</script>
+</body>
+</html>

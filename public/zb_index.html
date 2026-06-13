@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>控制台 - 蜀道AI招标雷达</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body, html {
+            height: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0f172a;
+            color: #f8fafc;
+            overflow: hidden;
+        }
+        /* 🔒 核心保险：源码和原始大括号绝不闪现 */
+        [v-cloak] { display: none !important; }
+
+        #app { display: flex; flex-direction: column; height: 100vh; position: relative; z-index: 10; }
+        
+        /* 顶部导航毛玻璃 */
+        .header {
+            height: 60px;
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+        }
+        .logo { font-size: 18px; font-weight: 800; color: #3b82f6; letter-spacing: 1px; }
+        .user-panel { font-size: 13px; color: #94a3b8; display: flex; align-items: center; gap: 12px; }
+        .badge-admin { background: #ef4444; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+
+        /* 三栏阶梯大布局 */
+        .main-container { display: flex; flex: 1; overflow: hidden; }
+
+        /* 📊 左栏：雷达订阅舱 (25%) */
+        .sidebar-left {
+            width: 25%;
+            background: rgba(15, 23, 42, 0.4);
+            border-right: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            overflow-y: auto;
+        }
+        .section-title { font-size: 14px; font-weight: 700; color: #3b82f6; text-transform: uppercase; letter-spacing: 0.5px; border-left: 3px solid #3b82f6; padding-left: 8px; }
+        .card-panel { background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 16px; }
+        .form-label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 8px; }
+        .textarea-custom { width: 100%; height: 60px; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; color: white; padding: 8px; font-size: 13px; outline: none; resize: none; }
+        .textarea-custom:focus { border-color: #3b82f6; }
+        
+        /* ⚙️ 中栏：大厅分类 Tabs 舱 (53%) */
+        .content-center { width: 53%; display: flex; flex-direction: column; overflow: hidden; background: rgba(15, 23, 42, 0.2); }
+        .tabs-bar {
+            display: flex;
+            background: rgba(30, 41, 59, 0.3);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 10px 16px 0 16px;
+            gap: 4px;
+        }
+        .tab-btn { padding: 10px 16px; background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 13px; font-weight: 600; border-top-left-radius: 6px; border-top-right-radius: 6px; transition: all 0.15s; }
+        .tab-btn:hover { background: rgba(255,255,255,0.05); color: white; }
+        .tab-btn.active { background: #2563eb; color: white; box-shadow: 0 -2px 10px rgba(37,99,235,0.3); }
+
+        /* 标讯卡片瀑布流 */
+        .list-container { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+        .tender-card {
+            background: rgba(30, 41, 59, 0.5);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 8px;
+            padding: 16px;
+            position: relative;
+            transition: all 0.2s;
+        }
+        .tender-card:hover { border-color: #2563eb; transform: translateY(-1px); }
+        .tender-card.is-top { border-left: 4px solid #f59e0b; background: rgba(245, 158, 11, 0.05); }
+        .tender-title { font-size: 15px; font-weight: 700; color: #ffffff; margin-bottom: 8px; line-height: 1.4; }
+        .tender-meta { font-size: 12px; color: #64748b; display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+        .tag-source { background: rgba(59,130,246,0.15); color: #60a5fa; padding: 1px 6px; border-radius: 4px; }
+        .tag-source.self { background: rgba(168,85,247,0.15); color: #c084fc; }
+        .tag-status { background: rgba(16,185,129,0.15); color: #34d399; padding: 1px 6px; border-radius: 4px; }
+        .tag-status.closed { background: rgba(239,68,68,0.15); color: #f87171; }
+        
+        /* ⚔️ 右栏：特种指挥部管理舱 (22%) */
+        .sidebar-right {
+            width: 22%;
+            background: rgba(30, 41, 59, 0.2);
+            border-left: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            overflow-y: auto;
+        }
+
+        /* 特种极客发光按钮 */
+        .btn-trigger { width: 100%; padding: 14px; background: linear-gradient(90deg, #d97706 0%, #dc2626 100%); color: white; border: none; border-radius: 8px; font-weight: 800; font-size: 14px; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 4px 15px rgba(220,38,38,0.2); transition: all 0.2s; }
+        .btn-trigger:hover { opacity: 0.95; transform: scale(1.01); box-shadow: 0 6px 20px rgba(220,38,38,0.4); }
+        .btn-blue { width: 100%; padding: 10px; background: #2563eb; color: white; border: none; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; transition: background 0.2s; }
+        .btn-blue:hover { background: #1d4ed8; }
+
+        /* 后台增删改专用快捷表单 */
+        .admin-form-group { margin-bottom: 12px; }
+        .admin-input { width: 100%; padding: 8px 12px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; color: white; font-size: 13px; outline: none; }
+        .admin-input:focus { border-color: #3b82f6; }
+        .admin-action-bar { display: flex; gap: 8px; margin-top: 10px; }
+        .btn-mini { padding: 4px 8px; font-size: 11px; font-weight: bold; border-radius: 4px; cursor: pointer; border: none; }
+        .btn-mini-danger { background: rgba(239,68,68,0.2); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+        .btn-mini-success { background: rgba(16,185,129,0.2); color: #34d399; border: 1px solid rgba(16,185,129,0.3); }
+        .log-box { font-family: monospace; font-size: 11px; color: #4ade80; background: #020617; padding: 12px; border-radius: 6px; height: 180px; overflow-y: auto; line-height: 1.5; border: 1px solid rgba(74,222,128,0.1); }
+    </style>
+</head>
+<body>
+
+<div id="app" v-cloak>
+    <div class="header">
+        <div class="logo">📡 SHUDAO.AI 蜀道招标万能雷达</div>
+        <div class="user-panel">
+            <span v-if="isAdmin" class="badge-admin">最高指挥官 (Admin)</span>
+            <span>通行证: <strong style="color:white;">{{ username }}</strong></span>
+            <span style="color:rgba(255,255,255,0.1);">|</span>
+            <a href="#" @click="logout" style="color: #60a5fa; text-decoration: none; font-weight: 500;">安全退出</a>
+        </div>
+    </div>
+
+    <div class="main-container">
+        
+        <div class="sidebar-left">
+            <div class="section-title">雷达监控策略</div>
+            <div class="card-panel">
+                <div class="form-group" style="margin-bottom:14px;">
+                    <label class="form-label">🎯 包含关键词胶囊 (逗号隔开)</label>
+                    <textarea v-model="subscription.keywords" class="textarea-custom" placeholder="例如: 算力, 软件, 信息设计"></textarea>
+                </div>
+                <div class="form-group" style="margin-bottom:14px;">
+                    <label class="form-label">❌ 黑名单排除词 (命中则强行熔断)</label>
+                    <textarea v-model="subscription.exclude_keywords" class="textarea-custom" placeholder="例如: 水泥, 劳务, 施工"></textarea>
+                </div>
+                <div class="form-group" style="margin-bottom:18px;">
+                    <label class="form-label">⏱️ 频控熔断与发信策略</label>
+                    <select v-model="subscription.push_strategy" class="admin-input" style="background: rgba(15,23,42,0.6);">
+                        <option :value="0">实时突击推送 (高价值拦截)</option>
+                        <option :value="1">黄昏合集日报 (Resend额度熔断保护)</option>
+                        <option :value="2">每周情报精选周报</option>
+                    </select>
+                </div>
+                <button @click="saveSubscription" class="btn-blue">🔒 锁死雷达配置</button>
+            </div>
+        </div>
+
+        <div class="content-center">
+            <div class="tabs-bar">
+                <button class="tab-btn" :class="{ active: currentTab === 'IT' }" @click="switchTab('IT')">🖥️ IT新基建</button>
+                <button class="tab-btn" :class="{ active: currentTab === 'DESIGN' }" @click="switchTab('DESIGN')">🎨 工业与信息设计</button>
+                <button class="tab-btn" :class="{ active: currentTab === 'CONSTRUCT' }" @click="switchTab('CONSTRUCT')">🏗️ 传统大宗土建</button>
+                <button class="tab-btn" :class="{ active: currentTab === 'SPECIAL' }" @click="switchTab('SPECIAL')">🌟 独家特权自发</button>
+            </div>
+
+            <div class="list-container">
+                <div v-if="tenders.length === 0" style="text-align:center; padding:40px; color:#64748b; font-size:13px;">当前行业板块暂无情报快报</div>
+                
+                <div v-else v-for="t in tenders" :key="t.id" class="tender-card" :class="{ 'is-top': t.is_top === 1 }">
+                    <div class="tender-title">
+                        <span v-if="t.is_top === 1" style="color:#f59e0b;">[📌置顶]</span>
+                        <span v-if="t.is_approved === 0" style="color:#ef4444;">[🚫草稿待审]</span>
+                        {{ t.title }}
+                    </div>
+                    <div class="tender-meta">
+                        <span class="tag-source" :class="{ 'self': t.source_platform === 'self' }">源: {{ t.source_platform }}</span>
+                        <span>预算: <strong style="color:#f43f5e;">{{ t.budget }}</strong></span>
+                        <span>区域: {{ t.region }}</span>
+                        <span>时间: {{ formatTime(t.scraped_at) }}</span>
+                    </div>
+
+                    <div v-if="t.attachment_snapshot_url" style="margin-bottom:8px;">
+                        <a :href="t.attachment_snapshot_url" target="_blank" style="color:#34d399; font-size:12px; text-decoration:none;">📎 标书本地快照已全量脱水 (点击下载)</a>
+                    </div>
+
+                    <div v-if="t.contact_info" style="font-size:12px; color:#c084fc; margin-bottom:8px;">
+                        📞 独家资源线索: {{ t.contact_info }}
+                    </div>
+
+                    <div v-if="isAdmin" class="admin-action-bar">
+                        <button class="btn-mini btn-mini-success" @click="toggleApprove(t)">
+                            {{ t.is_approved === 1 ? '下线为草稿' : '核准挂网' }}
+                        </button>
+                        <button class="btn-mini btn-mini-success" style="color:#fbbf24; border-color:rgba(251,191,36,0.3);" @click="toggleTop(t)">
+                            {{ t.is_top === 1 ? '取消置顶' : '行业置顶' }}
+                        </button>
+                        <select class="btn-mini" style="background:#1e293b; color:#94a3b8; border:1px solid rgba(255,255,255,0.1);" @change="reclassifyIndustry(t, $event.target.value)">
+                            <option value="">⚙️ 重新划分类别</option>
+                            <option value="IT">移至 IT新基建</option>
+                            <option value="DESIGN">移至 工业设计</option>
+                            <option value="CONSTRUCT">移至 传统土建</option>
+                            <option value="SPECIAL">移至 独家特权</option>
+                        </select>
+                        <button class="btn-mini btn-mini-danger" @click="deleteTender(t)">💥 斩断删除</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="sidebar-right">
+            <div class="section-title">雷达核反应堆控制</div>
+            <button @click="forceTriggerRadar" class="btn-trigger">🚀 全网雷达突击对账</button>
+
+            <template v-if="isAdmin">
+                <div class="section-title" style="margin-top:10px;">自主挂网/内容发布中心</div>
+                <div class="card-panel">
+                    <div class="admin-form-group">
+                        <label class="form-label">项目/标讯名称</label>
+                        <input type="text" v-model="publishData.title" class="admin-input" placeholder="输入招标项目全称...">
+                    </div>
+                    <div class="admin-form-group">
+                        <label class="form-label">指派所属行业板块</label>
+                        <select v-model="publishData.industry_category" class="admin-input">
+                            <option value="IT">🖥️ IT软硬件与新基建</option>
+                            <option value="DESIGN">🎨 工业与信息设计</option>
+                            <option value="CONSTRUCT">🏗️ 传统土建大宗分包</option>
+                            <option value="SPECIAL">🌟 独家特权自发项目</option>
+                        </select>
+                    </div>
+                    <div class="admin-form-group">
+                        <label class="form-label">项目财务预算</label>
+                        <input type="text" v-model="publishData.budget" class="admin-input" placeholder="例如: 4,500,000元">
+                    </div>
+                    <div class="admin-form-group">
+                        <label class="form-label">一手变现联系方式 (仅VIP可见)</label>
+                        <input type="text" v-model="publishData.contact_info" class="admin-input" placeholder="张总 138xxxxxxxx / 微信...">
+                    </div>
+                    <button @click="handlePublish" class="btn-blue" style="background:linear-gradient(90deg, #a855f7 0%, #2563eb 100%);">📝 录入自发库并挂网</button>
+                </div>
+            </template>
+
+            <div class="section-title">雷达对账日志回执</div>
+            <div class="log-box" ref="logStream">
+                <div v-for="log in logs">{{ log }}</div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script>
+    const API_BASE = window.location.origin;
+
+    // 🔒 安全第一防线：无凭证一律轰去登录页
+    if (!localStorage.getItem('mail_username')) {
+        window.location.href = '/login.html';
+    }
+
+    new Vue({
+        el: '#app',
+        data: {
+            username: localStorage.getItem('mail_username') || 'client',
+            isAdmin: false, // 动态判定最高指挥官特权
+            currentTab: 'IT',
+            tenders: [],
+            logs: [
+                "📡 [蜀道系统初始化] 正在建立高速数据信道...",
+                "🔒 [凭证校验] 成功挂载统一通行证凭证."
+            ],
+            subscription: { keywords: '', exclude_keywords: '', push_strategy: 1 },
+            publishData: { title: '', industry_category: 'IT', budget: '', contact_info: '' }
+        },
+        created() {
+            // 1. 判定身份，admin 账号物理开天眼
+            if (this.username.toLowerCase() === 'admin') {
+                this.isAdmin = true;
+                this.pushLog("⚡ [权限解封] 尊贵的最高指挥官，全维管理控制台已全量就位！");
+            }
+            this.fetchSubscription();
+            this.fetchTenders();
+        },
+        methods: {
+            pushLog(msg) {
+                const now = new Date();
+                const timeStr = now.toTimeString().split(' ')[0];
+                this.logs.push(`[${timeStr}] ${msg}`);
+                this.$nextTick(() => {
+                    if (this.$refs.logStream) this.$refs.logStream.scrollTop = this.$refs.logStream.scrollHeight;
+                });
+            },
+            switchTab(tabName) {
+                this.currentTab = tabName;
+                this.fetchTenders();
+            },
+            // 读取当前账号雷达监控偏好
+            fetchSubscription() {
+                axios.get(`${API_BASE}/api/subscribe/get?username=${this.subscription.username || this.username}`)
+                .then(res => { if (res.data) this.subscription = res.data; })
+                .catch(err => { this.pushLog("💥 偏好读取故障: " + err.message); });
+            },
+            // 锁死雷达配置
+            saveSubscription() {
+                axios.post(`${API_BASE}/api/subscribe/save`, {
+                    username: this.username,
+                    keywords: this.subscription.keywords,
+                    exclude_keywords: this.subscription.exclude_keywords,
+                    push_strategy: this.subscription.push_strategy
+                })
+                .then(res => { alert(res.data.message || '雷达策略成功锁死！'); this.pushLog("✅ 雷达双向包含/排除排除规则在边缘端同步锁死！"); })
+                .catch(err => { alert('锁定失败: ' + err.message); });
+            },
+            // 全权拉取前端对应板块的内容
+            fetchTenders() {
+                // 统一复用接口，将行业标识带过去
+                axios.get(`${API_BASE}/api/tenders/list?category=${this.currentTab}&admin=${this.isAdmin ? 'true' : 'false'}`)
+                .then(res => { this.tenders = res.data; })
+                .catch(err => { this.pushLog("💥 标讯大厅拉取障碍: " + err.message); });
+            },
+            // 后台强行突击对账按钮
+            forceTriggerRadar() {
+                this.pushLog("🚀 [原子弹发射] 正在强行远程激活边缘 Worker 雷达中枢...");
+                axios.post(`${API_BASE}/api/radar/force-trigger`)
+                .then(res => { alert(res.data.message); this.pushLog("✅ 雷达全网高维交叉对账对账执行完毕，情报已悉数精准砸箱！"); this.fetchTenders(); })
+                .catch(err => { alert('触发失败: ' + err.message); });
+            },
+            // 后台自发录入挂网
+            handlePublish() {
+                if (!this.publishData.title) return alert('请输入完整的项目公告名称');
+                axios.post(`${API_BASE}/api/tenders/create`, {
+                    title: this.publishData.title,
+                    industry_category: this.publishData.industry_category,
+                    budget: this.publishData.budget || '详见标书内容',
+                    contact_info: this.publishData.contact_info
+                })
+                .then(res => {
+                    alert('自建一手高价值情报成功注入库！');
+                    this.pushLog(`📝 自发项目录入成功: ${this.publishData.title}`);
+                    this.publishData.title = ''; this.publishData.budget = ''; this.publishData.contact_info = '';
+                    this.fetchTenders();
+                })
+                .catch(err => { alert('发布失败: ' + err.message); });
+            },
+            // 后台特权：核准挂网或下线
+            toggleApprove(tender) {
+                const nextVal = tender.is_approved === 1 ? 0 : 1;
+                axios.patch(`${API_BASE}/api/tenders/update-status`, { id: tender.id, field: 'is_approved', value: nextVal })
+                .then(() => { tender.is_approved = nextVal; this.pushLog(`🚦 修改挂网状态 ID:${tender.id} -> ${nextVal}`); });
+            },
+            // 后台特权：置顶控制
+            toggleTop(tender) {
+                const nextVal = tender.is_top === 1 ? 0 : 1;
+                axios.patch(`${API_BASE}/api/tenders/update-status`, { id: tender.id, field: 'is_top', value: nextVal })
+                .then(() => { tender.is_top = nextVal; this.pushLog(`📌 修改置顶级别 ID:${tender.id} -> ${nextVal}`); this.fetchTenders(); });
+            },
+            // 后台特权：强行重写前端归类的行业标签
+            reclassifyIndustry(tender, targetCategory) {
+                if (!targetCategory) return;
+                axios.patch(`${API_BASE}/api/tenders/update-status`, { id: tender.id, field: 'industry_category', value: targetCategory })
+                .then(() => { this.pushLog(`🏷️ 行业重新分类成功 ID:${tender.id} -> 转移至 ${targetCategory}`); this.fetchTenders(); });
+            },
+            // 后台特权：💥 永久斩断删除数据
+            deleteTender(tender) {
+                if (!confirm('最高指挥官，确定要彻底从 D1 库中抹除该条数据吗？此操作物理不可逆。')) return;
+                axios.patch(`${API_BASE}/api/tenders/update-status`, { id: tender.id, field: 'permanent_delete', value: 'true' })
+                .then(() => { this.pushLog(`💥 物理抹除标讯成功 ID:${tender.id}`); this.fetchTenders(); });
+            },
+            formatTime(timeStr) {
+                if (!timeStr) return '';
+                const date = new Date(timeStr);
+                return (date.getMonth() + 1) + '月' + date.getDate() + '日 ' + date.toTimeString().split(' ')[0].substring(0,5);
+            },
+            logout() { localStorage.removeItem('mail_username'); window.location.href = '/login.html'; }
+        }
+    });
+</script>
+</body>
+</html>

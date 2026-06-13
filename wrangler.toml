@@ -18,3 +18,9 @@ DOMAINS = "shudao.ai"
 send_email = [
   { name = "SEND_EMAIL" }
 ]
+
+# 🛸 补充：明确告诉 Wrangler 绑定这两个独立子域名，防止回滚
+routes = [
+  { pattern = "mail.shudao.ai", custom_domain = true },
+  { pattern = "zb.shudao.ai", custom_domain = true }
+]
