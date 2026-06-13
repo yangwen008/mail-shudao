@@ -271,7 +271,7 @@
 
     // 🔒 优先验证拦截，确保安全第一防线
     if (!localStorage.getItem('mail_username')) {
-        window.location.href = '/login.html';
+        window.location.href = '/mail_login.html';
     }
 
     new Vue({
@@ -383,7 +383,11 @@
                 const date = new Date(timeStr);
                 return (date.getMonth() + 1) + '月' + date.getDate() + '日';
             },
-            logout() { localStorage.removeItem('mail_username'); window.location.href = '/login.html'; }
+            // 🛡️ 绝杀修复：注销后，让轨道重定向精准回撤到邮局改名后的物理登录入口
+            logout() { 
+                localStorage.removeItem('mail_username'); 
+                window.location.href = '/mail_login.html'; 
+            }
         }
     });
 </script>

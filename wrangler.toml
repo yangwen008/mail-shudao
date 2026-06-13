@@ -1,11 +1,8 @@
 name = "mail-shudao"
 main = "src/index.js"
 compatibility_date = "2026-03-01"
-
-# 🌟 资产目录死锁在我们真正的网页池上
 assets = { directory = "./public" }
 
-# 绑定 D1 数据库
 [[d1_databases]]
 binding = "DB"
 database_name = "mail_db"
@@ -15,12 +12,6 @@ database_id = "a7fa2821-79a8-4e50-bc38-ccc3281b0107"
 ALLOWED_DOMAINS = "shudao.ai"
 DOMAINS = "shudao.ai"
 
-send_email = [
-  { name = "SEND_EMAIL" }
-]
-
-# 🛸 焊死双域名并网通行证，明确锁死边缘网络路由
 routes = [
-  { pattern = "mail.shudao.ai", custom_domain = true },
-  { pattern = "zb.shudao.ai", custom_domain = true }
+  { pattern = "mail.shudao.ai", custom_domain = true }
 ]
