@@ -214,18 +214,23 @@ export default {
     const getJson = async () => { try { return await request.json(); } catch { return {}; } };
 
     // ========================================================
-    // 🛡️ 终极绝杀：强行切断 Assets 自动顺位，按【物理域名】前置死锁
+    // 🛡️ 终极对齐：全面前置死锁路由，打碎原生的 Assets 夺权假象
     // ========================================================
     if (hostname.startsWith("zb.")) {
-      if (url.pathname === "/" || url.pathname === "/login.html" || url.pathname === "/index.html") {
+      // 从招标网进来
+      if (url.pathname === "/" || url.pathname === "/login.html" || url.pathname === "/zb_login.html") {
         return env.assets.fetch(new Request(new URL("/zb_login.html", request.url)));
       }
-      if (url.pathname === "/dashboard.html" || url.pathname === "/zb_index") {
+      if (url.pathname === "/index.html" || url.pathname === "/dashboard.html" || url.pathname === "/zb_index.html") {
         return env.assets.fetch(new Request(new URL("/zb_index.html", request.url)));
       }
     } else {
-      if (url.pathname === "/" || url.pathname === "/login.html") {
-        return env.assets.fetch(new Request(new URL("/login.html", request.url)));
+      // 从私人邮箱网进来（全面对接改名后的物理静态资产）
+      if (url.pathname === "/" || url.pathname === "/login.html" || url.pathname === "/mail_login.html") {
+        return env.assets.fetch(new Request(new URL("/mail_login.html", request.url)));
+      }
+      if (url.pathname === "/index.html" || url.pathname === "/mail_index.html") {
+        return env.assets.fetch(new Request(new URL("/mail_index.html", request.url)));
       }
     }
 
