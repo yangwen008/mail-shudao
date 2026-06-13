@@ -2,8 +2,8 @@ name = "mail-shudao"
 main = "src/index.js"
 compatibility_date = "2026-03-01"
 
-# 将 public 目录下的静态网页托管出去
-assets = { directory = "./public" }
+# 🛑 第一步：清空弹夹！强行把托管目录指向我们新建的那个全空文件夹
+assets = { directory = "./empty" }
 
 # 绑定 D1 数据库
 [[d1_databases]]
@@ -19,7 +19,7 @@ send_email = [
   { name = "SEND_EMAIL" }
 ]
 
-# 🛸 补充：明确告诉 Wrangler 绑定这两个独立子域名，防止回滚
+# 🛸 焊死双域名并网通行证，明确锁死边缘网络路由
 routes = [
   { pattern = "mail.shudao.ai", custom_domain = true },
   { pattern = "zb.shudao.ai", custom_domain = true }
