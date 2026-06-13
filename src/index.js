@@ -50,7 +50,7 @@ async function runShudaoRadarPipeline(env) {
       method: "POST",
       headers: {
         "Content-Type": "application/json;charset=UTF-8",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Referer": "https://ztb.shudaolink.com/notice",
         "Origin": "https://ztb.shudaolink.com"
       },
@@ -58,12 +58,11 @@ async function runShudaoRadarPipeline(env) {
     });
     const parsed = await response.json();
     if (!parsed || !parsed.data || !parsed.data.list) return;
-    const rawList = parsed.data.list;
 
     const itKeywords = ["算力", "软件", "信息化", "系统集成", "服务器", "网络", "数字", "智能", "数据库"];
     const designKeywords = ["设计", "三维", "BIM", "规划", "勘察", "效果图", "咨询"];
 
-    for (const item of rawList) {
+    for (const item of parsed.data.list) {
       const title = item.noticeTitle || "";
       const sourceId = item.id || "";
       const budget = item.budgetAmount ? `${item.budgetAmount}元` : "详见标书内容";
@@ -83,8 +82,7 @@ async function runShudaoRadarPipeline(env) {
     const unpushed = await env.DB.prepare("SELECT * FROM aggregate_tenders WHERE is_pushed = 0 AND is_approved = 1").all();
     const subscribers = await env.DB.prepare("SELECT * FROM user_subscriptions WHERE is_active = 1").all();
 
-    if (unpushed.results.length > 0 && subscribers.results.length > 0) {
-      const apiKey = env.RESEND_API_KEY;
+    if (unpushed.results.length > 0 && subscribers.results.length > 0 && env.RESEND_API_KEY) {
       for (const user of subscribers.results) {
         const userKeywords = user.keywords.split(",").map(k => k.trim()).filter(k => k !== "");
         const userExcludeKeywords = user.exclude_keywords ? user.exclude_keywords.split(",").map(k => k.trim()).filter(k => k !== "") : [];
@@ -92,34 +90,19 @@ async function runShudaoRadarPipeline(env) {
           return userKeywords.some(k => t.title.includes(k)) && !userExcludeKeywords.some(k => t.title.includes(k)); 
         });
 
-        if (matchedTenders.length > 0 && apiKey) {
+        if (matchedTenders.length > 0) {
           let tenderRows = "";
           matchedTenders.forEach(t => {
-            let catTag = t.industry_category === 'IT' ? '🖥️ IT新基建' : (t.industry_category === 'DESIGN' ? '🎨 工业设计' : '🏗️ 传统土建');
-            tenderRows += `
-              <div style="background:#ffffff; border:1px solid #e2e8f0; padding:15px; border-radius:8px; margin-bottom:12px;">
-                <span style="font-size:11px; font-weight:bold; color:#2563eb; background:#dbeafe; padding:2px 6px; border-radius:4px;">${catTag}</span>
-                <div style="margin-top:8px; font-weight:bold; color:#0f172a; font-size:15px;">💡 ${t.title}</div>
-                <div style="color:#64748b; font-size:13px; margin-top:4px;">预算金额：<span style="color:#ef4444; font-weight:bold;">${t.budget}</span></div>
-                <a href="${t.origin_url}" style="color:#2563eb; font-size:13px; text-decoration:none; display:inline-block; margin-top:8px;">➡️ 直达原始公告</a>
-              </div>
-            `;
+            tenderRows += `<p>💡 <strong>${t.title}</strong> (预算: ${t.budget}) <a href="${t.origin_url}">直达原始公告</a></p>`;
           });
-
-          const htmlContent = `
-            <div style="font-family:sans-serif; padding:24px; color:#1e293b; background:#f8fafc; max-width:600px; margin:0 auto; border-radius:12px; border:1px solid #e2e8f0;">
-              <h3 style="color:#2563eb; margin-bottom:4px;">📡 蜀道智能雷达拦截快报</h3>
-              <div style="margin-top:16px;">${tenderRows}</div>
-            </div>
-          `;
           await fetch("https://api.resend.com/emails", {
             method: "POST",
-            headers: { "Authorization": `Bearer ${apiKey.trim()}`, "Content-Type": "application/json" },
+            headers: { "Authorization": `Bearer ${env.RESEND_API_KEY.trim()}`, "Content-Type": "application/json" },
             body: JSON.stringify({
               from: `蜀道雷达中枢 <tender-radar@${env.DOMAINS || 'shudao.ai'}>`,
               to: [`${user.username}@${env.DOMAINS || 'shudao.ai'}`], 
-              subject: `【蜀道雷达】成功拦截 ${matchedTenders.length} 条高价值商业标讯`,
-              html: htmlContent
+              subject: `【蜀道雷达】拦截到 ${matchedTenders.length} 条高价值标讯`,
+              html: `<div>${tenderRows}</div>`
             })
           });
         }
@@ -134,7 +117,7 @@ async function runShudaoRadarPipeline(env) {
 // ========================================================
 export default {
   async scheduled(event, env, ctx) { ctx.waitUntil(runShudaoRadarPipeline(env)); },
-  async email(message, env, ctx) { /* 保持无损 */ },
+  async email(message, env, ctx) { /* 保持无损投递 */ },
 
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -149,19 +132,20 @@ export default {
     const getJson = async () => { try { return await request.json(); } catch { return {}; } };
 
     // ========================================================
-    // 🛡️ 终极维度死锁：非 API 请求时，按【物理主域名】进行绝对重写劫持
+    // 🛡️ 贯彻大侠原则：非 API 请求时，招标网免登录首页直接开放！
     // ========================================================
     if (!url.pathname.startsWith("/api/")) {
       if (hostname.startsWith("zb.")) {
-        // 🚨 无论缓存或请求路径怎么作怪，只要是从 zb. 域名进来的静态请求，一律人肉死锁翻牌子！
-        if (url.pathname === "/" || url.pathname === "/login.html" || url.pathname === "/index.html" || url.pathname === "/zb_login.html") {
-          return env.assets.fetch(new Request(new URL("/zb_login.html", request.url)));
-        }
-        if (url.pathname === "/dashboard.html" || url.pathname === "/zb_index.html") {
+        // 🚀 核心绝杀：访问根目录 /，直接翻牌子无条件吐出大厅大控制台（免登录浏览！）
+        if (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/zb_index.html" || url.pathname === "/dashboard.html") {
           return env.assets.fetch(new Request(new URL("/zb_index.html", request.url)));
         }
+        // 只有明确索要安全大门时，才吐出登录卡片
+        if (url.pathname === "/login.html" || url.pathname === "/zb_login.html") {
+          return env.assets.fetch(new Request(new URL("/zb_login.html", request.url)));
+        }
       } else {
-        // 私人邮局主域，如果访问根目录，强行指派给改名后的物理邮箱文件
+        // 邮局正常对接
         if (url.pathname === "/" || url.pathname === "/login.html" || url.pathname === "/mail_login.html") {
           return env.assets.fetch(new Request(new URL("/mail_login.html", request.url)));
         }
@@ -189,10 +173,7 @@ export default {
     }
     if (url.pathname === "/api/subscribe/save" && request.method === "POST") {
       const { username, keywords, exclude_keywords, push_strategy } = await getJson();
-      await env.DB.prepare(`
-        INSERT OR REPLACE INTO user_subscriptions (username, keywords, exclude_keywords, push_strategy, is_active, updated_at)
-        VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
-      `).bind(username.trim(), keywords || "", exclude_keywords || "", push_strategy ?? 1).run();
+      await env.DB.prepare(`INSERT OR REPLACE INTO user_subscriptions (username, keywords, exclude_keywords, push_strategy, is_active, updated_at) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`).bind(username.trim(), keywords || "", exclude_keywords || "", push_strategy ?? 1).run();
       return new Response(JSON.stringify({ success: true, message: "📡 边缘雷达双向规则已无损锁死！" }), { headers: corsHeaders });
     }
     if (url.pathname === "/api/subscribe/get" && request.method === "GET") {
@@ -223,7 +204,7 @@ export default {
       return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     }
 
-    // ================= 原有邮件系统 API 顺位接口 =================
+    // ================= 原有邮件系统 API 接口 =================
     if (url.pathname === "/api/emails" && request.method === "GET") {
       const username = url.searchParams.get("username");
       const filter = url.searchParams.get("filter") || "inbox";
