@@ -213,12 +213,14 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
     const getJson = async () => { try { return await request.json(); } catch { return {}; } };
 
-    // 🛡️ 【域名看门人物理隔离重写】
+    // ========================================================
+    // 🛡️ 终极绝杀：强行切断 Assets 自动顺位，按【物理域名】前置死锁
+    // ========================================================
     if (hostname.startsWith("zb.")) {
-      if (url.pathname === "/" || url.pathname === "/login.html") {
+      if (url.pathname === "/" || url.pathname === "/login.html" || url.pathname === "/index.html") {
         return env.assets.fetch(new Request(new URL("/zb_login.html", request.url)));
       }
-      if (url.pathname === "/index.html" || url.pathname === "/dashboard.html") {
+      if (url.pathname === "/dashboard.html" || url.pathname === "/zb_index") {
         return env.assets.fetch(new Request(new URL("/zb_index.html", request.url)));
       }
     } else {
@@ -350,7 +352,7 @@ export default {
         }
       }
       await env.DB.prepare(`UPDATE emails SET ${field} = ? WHERE id = ?`).bind(value, id).run();
-      return new Response(JSON.stringify({ success: true }), { headers: credentials });
+      return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     }
 
     if (url.pathname === "/api/send" && request.method === "POST") {
