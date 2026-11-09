@@ -163,7 +163,7 @@
                     <button class="btn-tool" @click="fetchEmails">刷新</button>
                 </div>
                 <div class="list-container">
-                    <div v-if="emails.length === 0" class="empty-tip">暂无邮件</div>
+                    <div v-if="emails.length === 0" class="empty-tip">{{ currentFilter === 'group' ? '👥 群邮件功能暂未开放' : (currentFilter === 'draft' ? '暂无草稿' : '暂无邮件') }}</div>
                     <table v-else class="mail-table">
                         <tbody>
                             <tr v-for="mail in emails" :key="mail.id">
@@ -202,13 +202,20 @@
                             <div><strong>时 间：</strong>{{ activeMail.received_at }}</div>
                         </div>
                     </div>
-                    <div class="mail-body" v-html="activeMail.body_text"></div>
+                    <div v-if="mailAttachments(activeMail).length > 0" class="attachment-zone">
+                        <div class="attachment-item" v-for="(att, idx) in mailAttachments(activeMail)" :key="idx" style="cursor: pointer;" @click="downloadAttachment(att)" title="点击下载">
+                            📎 {{ att.filename }} ({{ (att.size / 1024).toFixed(1) }} KB) ⬇
+                        </div>
+                    </div>
+                    <div class="mail-body" v-if="mailHtml(activeMail)" v-html="mailHtml(activeMail)"></div>
+                    <div class="mail-body" v-else v-text="activeMail.body_text"></div>
                 </div>
             </template>
 
             <template v-else-if="viewMode === 'compose'">
                 <div class="toolbar">
                     <button class="btn-tool" @click="sendMail" style="background: #2563eb; color: white; font-weight: bold; border-color: #1d4ed8;">立即发送</button>
+                    <button class="btn-tool" @click="saveDraft">💾 存草稿</button>
                     <button class="btn-tool" @click="triggerFileInput">📎 添加附件</button>
                     <input type="file" ref="fileInput" @change="handleFileChange" style="display: none;" multiple>
                     <button class="btn-tool" @click="viewMode = 'list'">取消</button>
@@ -269,9 +276,12 @@
 <script>
     const API_BASE = window.location.origin;
 
-    // 🔒 优先验证拦截，确保安全第一防线
-    if (!localStorage.getItem('mail_username')) {
+    // 🔒 会话令牌第一防线：无令牌一律回登录页
+    const AUTH_TOKEN = localStorage.getItem('mail_token');
+    if (!AUTH_TOKEN) {
         window.location.href = '/mail_login.html';
+    } else {
+        axios.defaults.headers.common['Authorization'] = 'Bearer ' + AUTH_TOKEN;
     }
 
     new Vue({
@@ -282,6 +292,7 @@
             viewMode: 'list',
             emails: [],
             activeMail: null,
+            editingDraftId: null,
             composeData: { to: '', subject: '' },
             attachedFiles: []
         },
@@ -294,7 +305,14 @@
                     params: { username: this.username, filter: this.currentFilter }
                 })
                 .then(res => { this.emails = res.data; })
-                .catch(err => { alert('获取邮件故障: ' + err.message); });
+                .catch(err => {
+                    if (err.response && err.response.status === 401) {
+                        localStorage.removeItem('mail_token');
+                        window.location.href = '/mail_login.html';
+                        return;
+                    }
+                    alert('获取邮件故障: ' + err.message);
+                });
             },
             changeFilter(filterType) {
                 this.currentFilter = filterType;
@@ -304,6 +322,7 @@
             switchToCompose() {
                 this.composeData = { to: '', subject: '' };
                 this.attachedFiles = [];
+                this.editingDraftId = null;
                 this.viewMode = 'compose';
                 this.$nextTick(() => { if(this.$refs.editorBox) this.$refs.editorBox.innerHTML = ''; });
             },
@@ -313,14 +332,18 @@
             },
             editAgain(mail) {
                 this.composeData = {
-                    to: mail.to_address.replace('_deleted', ''),
+                    to: mail.is_draft ? (mail.to_address || '') : mail.to_address.replace('_deleted', ''),
                     subject: mail.subject
                 };
                 this.attachedFiles = [];
+                this.editingDraftId = mail.is_draft ? mail.id : null;
                 this.viewMode = 'compose';
                 this.$nextTick(() => {
                     if (this.$refs.editorBox) {
-                        this.$refs.editorBox.innerHTML = mail.body_text;
+                        // 优先用脱敏富文本，纯文本则转义后回填
+                        const raw = mail.body_html || (mail.body_text || '')
+                            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                        this.$refs.editorBox.innerHTML = raw;
                     }
                 });
             },
@@ -351,14 +374,15 @@
                     return;
                 }
                 axios.post(`${API_BASE}/api/send`, {
-                    from_user: this.username,
                     to_email: this.composeData.to,
                     subject: this.composeData.subject || '(无主题)',
                     content: richHtmlContent,
-                    attachments: this.attachedFiles
+                    attachments: this.attachedFiles,
+                    draft_id: this.editingDraftId
                 })
                 .then(res => {
                     alert(res.data.message || '发送成功！');
+                    this.editingDraftId = null;
                     this.changeFilter('sent');
                 })
                 .catch(err => { alert('发送失败: ' + (err.response ? err.response.data.message : err.message)); });
@@ -383,10 +407,55 @@
                 const date = new Date(timeStr);
                 return (date.getMonth() + 1) + '月' + date.getDate() + '日';
             },
-            // 🛡️ 绝杀修复：注销后，让轨道重定向精准回撤到邮局改名后的物理登录入口
-            logout() { 
-                localStorage.removeItem('mail_username'); 
-                window.location.href = '/mail_login.html'; 
+            // ---------- 新增：安全渲染 / 附件 / 草稿 ----------
+            sanitizeClient(html) {
+                return String(html)
+                    .replace(/<\s*(script|style|iframe|object|embed|form|base)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
+                    .replace(/<\s*\/?\s*(script|iframe|object|embed|form|base|meta|link)[^>]*>/gi, '')
+                    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+                    .replace(/(href|src|action|formaction)\s*=\s*("|')\s*(javascript|vbscript|data:text\/html)[^"']*\2/gi, '$1="#"');
+            },
+            mailHtml(mail) {
+                if (!mail) return '';
+                const looksHtml = /<[a-z][\s\S]*>/i.test(mail.body_text || '');
+                const raw = mail.body_html || (looksHtml ? mail.body_text : '');
+                return raw ? this.sanitizeClient(raw) : '';
+            },
+            mailAttachments(mail) {
+                try { return mail && mail.attachments_json ? JSON.parse(mail.attachments_json) : []; }
+                catch { return []; }
+            },
+            downloadAttachment(att) {
+                axios.get(`${API_BASE}/api/attachments`, { params: { key: att.key }, responseType: 'blob' })
+                .then(res => {
+                    const blobUrl = URL.createObjectURL(res.data);
+                    const a = document.createElement('a');
+                    a.href = blobUrl; a.download = att.filename || 'attachment';
+                    document.body.appendChild(a); a.click(); a.remove();
+                    URL.revokeObjectURL(blobUrl);
+                })
+                .catch(() => alert('附件下载失败'));
+            },
+            saveDraft() {
+                const content = this.$refs.editorBox ? this.$refs.editorBox.innerHTML : '';
+                axios.post(`${API_BASE}/api/drafts/save`, {
+                    id: this.editingDraftId,
+                    to: this.composeData.to,
+                    subject: this.composeData.subject,
+                    content: content
+                })
+                .then(res => {
+                    this.editingDraftId = res.data.id || null;
+                    alert('草稿已保存');
+                })
+                .catch(err => { alert('保存失败: ' + (err.response && err.response.data ? err.response.data.message : err.message)); });
+            },
+            // 🛡️ 注销：清令牌并回到登录页
+            logout() {
+                axios.post(`${API_BASE}/api/logout`).catch(() => {});
+                localStorage.removeItem('mail_token');
+                localStorage.removeItem('mail_username');
+                window.location.href = '/mail_login.html';
             }
         }
     });

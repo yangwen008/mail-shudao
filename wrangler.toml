@@ -8,9 +8,18 @@ binding = "DB"
 database_name = "mail_db"
 database_id = "a7fa2821-79a8-4e50-bc38-ccc3281b0107"
 
+# 附件存储（部署前先在 Cloudflare 控制台创建 R2 桶 mail-attachments）
+[[r2_buckets]]
+binding = "ATTACHMENTS"
+bucket_name = "mail-attachments"
+
 [vars]
 ALLOWED_DOMAINS = "shudao.ai"
 DOMAINS = "shudao.ai"
+# 招标雷达情报源：逗号分隔的 RSS/Atom 地址（不配置则雷达触发仅返回就绪提示）
+# RADAR_SOURCES = "https://example.com/tenders.xml,https://example.org/feed"
+
+# 发信密钥请用 wrangler secret put RESEND_API_KEY 设置，不要写进本文件
 
 routes = [
   { pattern = "mail.shudao.ai", custom_domain = true }

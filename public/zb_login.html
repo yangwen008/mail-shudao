@@ -135,7 +135,8 @@
                         alert('蜀道AI大一统凭证创建成功！请登录。');
                         this.isRegisterMode = false;
                     } else {
-                        localStorage.setItem('mail_username', this.formData.username.trim());
+                        localStorage.setItem('mail_token', res.data.token);
+                        localStorage.setItem('mail_username', res.data.username || this.formData.username.trim());
                         // 🛠️ 终极对齐：直接进入绝对静态文件路径，绕过一切模糊匹配
                         window.location.href = '/zb_index.html'; 
                     }

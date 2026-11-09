@@ -82,7 +82,7 @@
             <div class="tabs-bar">
                 <button class="tab-btn" :class="{ active: currentTab === 'IT' }" @click="switchTab('IT')">🖥️ IT新基建</button>
                 <button class="tab-btn" :class="{ active: currentTab === 'DESIGN' }" @click="switchTab('DESIGN')">🎨 工业与信息设计</button>
-                <button class="tab-btn" :class="{ active: active = currentTab === 'CONSTRUCT' }" @click="switchTab('CONSTRUCT')">🏗️ 传统大宗土建</button>
+                <button class="tab-btn" :class="{ active: currentTab === 'CONSTRUCT' }" @click="switchTab('CONSTRUCT')">🏗️ 传统大宗土建</button>
             </div>
             <div class="list-container">
                 <div v-if="tenders.length === 0" style="text-align:center; padding:40px; color:#64748b;">当前板块暂无情报</div>
@@ -121,10 +121,13 @@
 
 <script>
     const API_BASE = window.location.origin;
+    // 会话令牌（与邮箱共用同一套账号体系）
+    const AUTH_TOKEN = localStorage.getItem('mail_token');
+    if (AUTH_TOKEN) axios.defaults.headers.common['Authorization'] = 'Bearer ' + AUTH_TOKEN;
     new Vue({
         el: '#app',
         data: {
-            username: localStorage.getItem('mail_username') || '',
+            username: AUTH_TOKEN ? (localStorage.getItem('mail_username') || '') : '',
             isAdmin: false,
             currentTab: 'IT',
             tenders: [],
@@ -133,7 +136,7 @@
             publishData: { title: '', industry_category: 'IT', budget: '详见标书', contact_info: '' }
         },
         created() {
-            if (this.username.toLowerCase() === 'admin') this.isAdmin = true;
+            if (this.username && this.username.toLowerCase() === 'admin') this.isAdmin = true;
             if (this.username) this.fetchSubscription();
             this.fetchTenders();
         },
@@ -144,20 +147,32 @@
                 .then(res => { if (res.data) this.subscription = res.data; });
             },
             saveSubscription() {
-                axios.post(`${API_BASE}/api/subscribe/save`, { username: this.username, ...this.subscription })
-                .then(res => { alert(res.data.message || '策略成功锁死！'); });
+                axios.post(`${API_BASE}/api/subscribe/save`, { ...this.subscription })
+                .then(res => { alert(res.data.message || '策略成功锁死！'); })
+                .catch(err => { alert('保存失败：' + (err.response && err.response.data ? err.response.data.message : '请先登录')); });
             },
             fetchTenders() {
-                axios.get(`${API_BASE}/api/tenders/list?category=${this.currentTab}&admin=${this.isAdmin ? 'true' : 'false'}`)
-                .then(res => { this.tenders = res.data; });
+                // 管理员身份由服务端会话令牌判定，不再前端传参
+                axios.get(`${API_BASE}/api/tenders/list?category=${this.currentTab}`)
+                .then(res => { this.tenders = res.data; })
+                .catch(() => { this.tenders = []; });
             },
             forceTriggerRadar() {
-                axios.post(`${API_BASE}/api/radar/force-trigger`).then(res => { alert(res.data.message); this.fetchTenders(); });
+                axios.post(`${API_BASE}/api/radar/force-trigger`)
+                .then(res => { this.logs.push('🚀 ' + res.data.message); alert(res.data.message); this.fetchTenders(); })
+                .catch(err => { alert('触发失败：' + (err.response && err.response.data ? err.response.data.message : '请先登录')); });
             },
             handlePublish() {
-                axios.post(`${API_BASE}/api/tenders/create`, this.publishData).then(() => { alert('录入成功'); this.fetchTenders(); });
+                axios.post(`${API_BASE}/api/tenders/create`, this.publishData)
+                .then(() => { alert('录入成功'); this.publishData.title = ''; this.fetchTenders(); })
+                .catch(err => { alert('发布失败：' + (err.response && err.response.data ? err.response.data.message : '请先登录')); });
             },
-            logout() { localStorage.removeItem('mail_username'); window.location.reload(); }
+            logout() {
+                axios.post(`${API_BASE}/api/logout`).catch(() => {});
+                localStorage.removeItem('mail_token');
+                localStorage.removeItem('mail_username');
+                window.location.reload();
+            }
         }
     });
 </script>

@@ -35,24 +35,42 @@
                 <label class="form-label">安全密码</label>
                 <input type="password" v-model="formData.password" class="form-input" required>
             </div>
-            <button type="submit" class="btn-primary" :disabled="loading">{{ loading ? '正在验证安全凭证...' : '安全登录' }}</button>
+            <button type="submit" class="btn-primary" :disabled="loading">{{ loading ? '正在验证安全凭证...' : (isRegisterMode ? '注册新账号' : '安全登录') }}</button>
         </form>
+        <div style="margin-top: 25px; text-align: center; font-size: 13px; color: #64748b;">
+            <span>{{ isRegisterMode ? '已有系统账号?' : '还没有邮局账号?' }}</span>
+            <a href="#" @click.prevent="isRegisterMode = !isRegisterMode" style="color: #60a5fa; text-decoration: none; font-weight: 500; margin-left: 5px;">
+                {{ isRegisterMode ? '立即登录' : '注册新账号' }}
+            </a>
+        </div>
     </div>
 </div>
 <script>
     const API_BASE = window.location.origin;
     new Vue({
         el: '#app',
-        data: { loading: false, formData: { username: '', password: '' } },
+        data: { loading: false, isRegisterMode: false, formData: { username: '', password: '' } },
         methods: {
             handleSubmit() {
+                if (this.loading) return;
+                if (this.formData.password.length < 6) { alert('密码至少 6 位'); return; }
                 this.loading = true;
-                axios.post(`${API_BASE}/api/login`, { username: this.formData.username.trim(), password: this.formData.password })
+                const targetPath = this.isRegisterMode ? '/api/register' : '/api/login';
+                axios.post(`${API_BASE}${targetPath}`, { username: this.formData.username.trim(), password: this.formData.password })
                 .then(res => {
-                    localStorage.setItem('mail_username', this.formData.username.trim());
-                    window.location.href = '/mail_index.html'; 
+                    this.loading = false;
+                    if (this.isRegisterMode) {
+                        alert('账号创建成功，已自动登录！');
+                    }
+                    localStorage.setItem('mail_token', res.data.token);
+                    localStorage.setItem('mail_username', res.data.username || this.formData.username.trim());
+                    window.location.href = '/mail_index.html';
                 })
-                .catch(err => { this.loading = false; alert('登录鉴权失败'); });
+                .catch(err => {
+                    this.loading = false;
+                    const msg = err.response && err.response.data && err.response.data.message ? err.response.data.message : '网络异常';
+                    alert((this.isRegisterMode ? '注册失败：' : '登录失败：') + msg);
+                });
             }
         }
     });
