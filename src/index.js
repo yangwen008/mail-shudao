@@ -319,6 +319,12 @@ export default {
     const getJson = async () => { try { return await request.json(); } catch { return {}; } };
     const ip = request.headers.get("cf-connecting-ip") || "unknown";
 
+    // 审核页壳（浏览器打开的 HTML，非 JSON）
+    const reviewPage = (inner) => new Response(
+      `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>蜀道AI邮箱 - 注册审核</title><style>body{font-family:-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}.card{background:#1e293b;padding:40px 48px;border-radius:12px;text-align:center;max-width:440px;line-height:1.8}button{padding:12px 28px;border:none;border-radius:8px;font-size:16px;cursor:pointer;margin:8px}.ok{background:#2563eb;color:#fff}.no{background:#475569;color:#fff}</style></head><body><div class="card">${inner}</div></body></html>`,
+      { headers: { "Content-Type": "text/html; charset=utf-8" } }
+    );
+
     // 首页 → 邮局登录（/index.html 等旧路径由静态跳转桩接管）
     if (url.pathname === "/") {
       return env.assets.fetch(new Request(new URL("/mail_login.html", request.url)));
@@ -334,9 +340,39 @@ export default {
       if (!password || password.length < 6) return json({ success: false, message: "密码至少 6 位" }, 400);
       try {
         const secureHash = await createPasswordHash(password);
-        await env.DB.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").bind(cleanUser, secureHash).run();
-        const token = await createSession(env, cleanUser);
-        return json({ success: true, token, username: cleanUser });
+
+        // ---- 注册审核策略：新用户默认 pending；引导场景自动通过 ----
+        let status = "pending";
+        const total = await env.DB.prepare("SELECT COUNT(*) AS c FROM users").first();
+        const adminExists = await env.DB.prepare("SELECT username FROM users WHERE username = 'admin'").first();
+        if ((total && total.c === 0) || (cleanUser === "admin" && !adminExists)) {
+          status = "approved"; // 系统引导：首个注册用户 / 首个 admin 自动通过，避免无人可审的死锁
+        }
+        await env.DB.prepare("INSERT INTO users (username, password_hash, status) VALUES (?, ?, ?)")
+          .bind(cleanUser, secureHash, status).run();
+
+        if (status === "approved") {
+          const token = await createSession(env, cleanUser);
+          return json({ success: true, token, username: cleanUser });
+        }
+
+        // ---- 待审核：生成一次性审核动作，通知送进 admin 管理员邮箱 ----
+        const reviewToken = toHex(crypto.getRandomValues(new Uint8Array(32)));
+        const now = Date.now();
+        await env.DB.prepare("INSERT INTO review_actions (token, username, created_at, expires_at) VALUES (?, ?, ?, ?)")
+          .bind(reviewToken, cleanUser, now, now + 7 * 24 * 3600 * 1000).run();
+
+        const approveUrl = `${url.origin}/api/admin/review?token=${reviewToken}&decision=approve`;
+        const rejectUrl = `${url.origin}/api/admin/review?token=${reviewToken}&decision=reject`;
+        const notifyHtml = `<p>新用户 <b>${cleanUser}</b> 申请注册 <b>${cleanUser}@shudao.ai</b> 邮箱账号。</p>
+          <p>请审核：</p>
+          <p><a href="${approveUrl}">✅ 通过</a> &nbsp;|&nbsp; <a href="${rejectUrl}">❌ 拒绝</a></p>
+          <p style="color:#94a3b8;font-size:12px;">链接 7 天内有效且仅可使用一次；点击后需在页面确认，防止邮件安全网关误触。</p>`;
+        await env.DB.prepare(
+          "INSERT INTO emails (to_address, from_address, subject, body_text, body_html, is_draft) VALUES ('admin@shudao.ai', 'system@shudao.ai', ?, ?, ?, 0)"
+        ).bind(`【注册审核】${cleanUser} 申请开通邮箱`, stripHtmlTags(notifyHtml), sanitizeHtml(notifyHtml)).run();
+
+        return json({ success: true, pending: true, message: "注册申请已提交，请等待管理员审核通过后再登录" });
       } catch {
         return json({ success: false, message: "账号前缀已被占用" }, 400);
       }
@@ -351,6 +387,13 @@ export default {
         if (user) {
           const verdict = await verifyPassword(password, user.password_hash);
           if (verdict) {
+            // 注册审核门禁：未通过审核不发会话
+            if (user.status === "pending") {
+              return json({ success: false, message: "注册申请审核中，请等待管理员通过后再登录" }, 403);
+            }
+            if (user.status === "rejected") {
+              return json({ success: false, message: "注册申请未通过审核" }, 403);
+            }
             // 存量旧哈希 → 登录成功时静默升级为 PBKDF2
             if (verdict === "ok-legacy") {
               try {
@@ -380,6 +423,70 @@ export default {
       const user = await getSessionUser(env, request);
       if (!user) return json({ success: false }, 401);
       return json({ success: true, username: user });
+    }
+
+    // ==================== 注册审核（管理员邮箱链接流） ====================
+
+    // 管理员点邮件链接 → 二次确认页（防邮件网关预取自动通过）
+    if (url.pathname === "/api/admin/review" && request.method === "GET") {
+      const token = url.searchParams.get("token") || "";
+      const decision = url.searchParams.get("decision") === "reject" ? "reject" : "approve";
+      const row = await env.DB.prepare("SELECT * FROM review_actions WHERE token = ?").bind(token).first();
+      if (!row || row.expires_at < Date.now()) {
+        return reviewPage(`<h2>⚠️ 链接无效或已过期</h2><p>请在管理员邮箱中重新处理，或让申请人重新注册。</p>`);
+      }
+      const label = decision === "reject" ? "拒绝" : "通过";
+      return reviewPage(`
+        <h2>📋 注册审核</h2>
+        <p>申请人：<b style="font-size:22px;">${row.username}</b>@shudao.ai</p>
+        <p>确认<b>${label}</b>该用户的注册申请？</p>
+        <form method="POST" action="/api/admin/review">
+          <input type="hidden" name="token" value="${token}">
+          <input type="hidden" name="decision" value="${decision}">
+          <button class="${decision === "reject" ? "no" : "ok"}" type="submit">确认${label}</button>
+        </form>`);
+    }
+
+    // 确认页提交 → 生效并通知申请人
+    if (url.pathname === "/api/admin/review" && request.method === "POST") {
+      let params = {};
+      try {
+        const ct = request.headers.get("content-type") || "";
+        if (ct.includes("form-urlencoded") || ct.includes("multipart/form-data")) {
+          params = Object.fromEntries((await request.formData()).entries());
+        } else {
+          params = await getJson();
+        }
+      } catch { params = {}; }
+      const token = String(params.token || "");
+      const decision = params.decision === "reject" ? "rejected" : "approved";
+
+      const row = await env.DB.prepare("SELECT * FROM review_actions WHERE token = ?").bind(token).first();
+      if (!row || row.expires_at < Date.now()) {
+        return reviewPage(`<h2>⚠️ 链接无效或已过期</h2>`);
+      }
+      await env.DB.prepare("UPDATE users SET status = ? WHERE username = ? AND status = 'pending'")
+        .bind(decision, row.username).run();
+      await env.DB.prepare("DELETE FROM review_actions WHERE username = ?").bind(row.username).run();
+
+      // 结果通知回申请人邮箱
+      const label = decision === "approved" ? "已通过" : "未通过";
+      const bodyHtml = decision === "approved"
+        ? `<p>您的注册申请<b>已通过</b>！现在可以用 <b>${row.username}</b> 登录蜀道AI邮箱。</p>`
+        : `<p>很遗憾，您的注册申请<b>未通过</b>审核。如有疑问请联系管理员。</p>`;
+      await env.DB.prepare(
+        "INSERT INTO emails (to_address, from_address, subject, body_text, body_html, is_draft) VALUES (?, 'system@shudao.ai', ?, ?, ?, 0)"
+      ).bind(`${row.username}@shudao.ai`, `【注册审核】申请${label}`, stripHtmlTags(bodyHtml), sanitizeHtml(bodyHtml)).run();
+
+      return reviewPage(`<h2>✅ 操作完成</h2><p>用户 <b>${row.username}</b> 的注册申请已<b>${label}</b>。</p><p>结果已通知至申请人邮箱。</p>`);
+    }
+
+    // 管理员：待审列表（供面板/程序化查询）
+    if (url.pathname === "/api/admin/pending" && request.method === "GET") {
+      const user = await getSessionUser(env, request);
+      if (user !== "admin") return json({ success: false, message: "仅管理员可用" }, 403);
+      const { results } = await env.DB.prepare("SELECT username, status FROM users WHERE status = 'pending' ORDER BY username").all();
+      return json(results);
     }
 
     // ==================== 邮件 API（一律以会话认权） ====================

@@ -59,12 +59,16 @@
                 axios.post(`${API_BASE}${targetPath}`, { username: this.formData.username.trim(), password: this.formData.password })
                 .then(res => {
                     this.loading = false;
-                    if (this.isRegisterMode) {
-                        alert('账号创建成功，已自动登录！');
+                    if (res.data.token) {
+                        // 已即时通过（引导账号）→ 直接进入
+                        localStorage.setItem('mail_token', res.data.token);
+                        localStorage.setItem('mail_username', res.data.username || this.formData.username.trim());
+                        window.location.href = '/mail_index.html';
+                    } else {
+                        // 待审核：不能登录，等待管理员在邮箱里通过
+                        alert(res.data.message || '注册申请已提交，请等待管理员审核通过后再登录');
+                        this.isRegisterMode = false;
                     }
-                    localStorage.setItem('mail_token', res.data.token);
-                    localStorage.setItem('mail_username', res.data.username || this.formData.username.trim());
-                    window.location.href = '/mail_index.html';
                 })
                 .catch(err => {
                     this.loading = false;

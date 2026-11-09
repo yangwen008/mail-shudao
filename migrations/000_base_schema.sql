@@ -6,7 +6,15 @@
 
 CREATE TABLE IF NOT EXISTS users (
   username      TEXT PRIMARY KEY,
-  password_hash TEXT NOT NULL
+  password_hash TEXT NOT NULL,
+  status        TEXT DEFAULT 'pending'   -- pending | approved | rejected
+);
+
+CREATE TABLE IF NOT EXISTS review_actions (
+  token      TEXT PRIMARY KEY,
+  username   TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS emails (

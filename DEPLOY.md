@@ -17,6 +17,7 @@
 ```bash
 npx wrangler d1 execute mail_db --remote --file migrations/001_auth_radar.sql   # 幂等
 npx wrangler d1 execute mail_db --remote --file migrations/002_emails_upgrade.sql  # ⚠️ 只执行一次
+npx wrangler d1 execute mail_db --remote --file migrations/003_user_approval.sql   # ⚠️ 只执行一次（注册审核）
 ```
 
 全新环境（本地开发/新库）：
@@ -25,7 +26,7 @@ npx wrangler d1 execute mail_db --local --file migrations/000_base_schema.sql
 npx wrangler d1 execute mail_db --local --file migrations/001_auth_radar.sql
 ```
 
-> 002 给 emails 增加 `body_html` / `attachments_json` / `is_draft` 三列，重复执行会报 duplicate column（报错即忽略该条）。
+> 002 给 emails 增加 `body_html` / `attachments_json` / `is_draft` 三列；003 给 users 增加 `status` 列并建 `review_actions` 表。两者均**只执行一次**，重复执行会报 duplicate column（报错即忽略该条）。
 
 ### 3. 配置密钥
 ```bash
@@ -53,6 +54,7 @@ npx wrangler deploy
 6. 草稿：写信 → 存草稿 → 草稿箱可见 → 再次编辑/删除
 7. 招标雷达：`/zb_login.html` 登录 → `/zb_index.html` 发布/浏览项目
 8. admin 账号：用注册创建（用户名 `admin`，密码自设）；非 admin 在雷达页发布应被拒
+9. **注册审核**：新注册用户提示“等待审核”且无法登录 → `admin@shudao.ai` 邮箱收到【注册审核】通知 → 点“✅ 通过” → 二次确认页确认 → 申请人邮箱收到结果通知 → 可登录
 
 ## 五、安全说明（本次整改）
 | 原问题 | 处置 |
@@ -62,6 +64,15 @@ npx wrangler deploy
 | `/api/emails/status` SQL 注入 | 字段白名单 + 归属校验（非本人邮件 403） |
 | SHA-256+固定盐弱哈希 | PBKDF2-SHA256（10 万次迭代）+ 每用户随机盐；**存量旧哈希在用户下次登录时自动升级** |
 | 无速率限制 | 注册/登录 10次/分钟/IP；发信 30次/小时/用户；雷达 5次/小时/用户 |
+| 注册即用、无审核 | **注册审核流**：新用户 pending 状态不可登录，admin 邮箱收审核通知，链接单次有效 7 天过期，二次确认防邮件网关预取；结果通知回申请人 |
+
+## 六、注册审核机制
+- 新注册 → `users.status = 'pending'`，登录被 403 拦截
+- 通知邮件自动投进 `admin@shudao.ai` 收件箱，含 ✅通过 / ❌拒绝 链接
+- 链接对应 `review_actions` 表一次性令牌：点开是确认页（防邮件安全网关自动预取误审），确认后才生效
+- 通过 → 用户可登录；拒绝 → 永久拦截；结果都会发邮件通知申请人
+- **引导规则**：空库首个注册用户 / 首个 `admin` 账号自动通过（避免无人可审的死锁）；存量老用户迁移时已批量置为 approved
+- 管理员可随时查待审列表：`GET /api/admin/pending`（需 admin 会话）
 
 ## 六、注意事项
 - 老用户无需重置密码，登录成功即自动换新哈希；如需强制全员重置可清空 users.password_hash

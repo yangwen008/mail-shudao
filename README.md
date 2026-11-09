@@ -32,8 +32,11 @@ node tests/smoke.mjs        # 需先在本地库注入测试数据（见脚本�
 ## API 一览
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
-| POST | /api/register | 限流 | 注册并自动登录 |
-| POST | /api/login | 限流 | 登录，返回会话令牌 |
+| POST | /api/register | 限流 | 注册（新用户进审核流，引导账号自动通过） |
+| POST | /api/login | 限流 | 登录（仅 approved 账号），返回会话令牌 |
+| GET | /api/admin/review?token&decision | 链接 | 审核二次确认页（防预取） |
+| POST | /api/admin/review | 链接令牌 | 执行通过/拒绝，通知申请人 |
+| GET | /api/admin/pending | admin | 待审用户列表 |
 | POST | /api/logout | 令牌 | 注销会话 |
 | GET | /api/me | 令牌 | 当前用户 |
 | GET | /api/emails?filter= | 令牌 | inbox/sent/draft/trash/starred/vip/group |
@@ -51,3 +54,4 @@ node tests/smoke.mjs        # 需先在本地库注入测试数据（见脚本�
 - 会话：30 天 Bearer 令牌（D1 sessions），全部 API 服务端认权
 - HTML：入库/出库双重脱敏（script/事件属性/危险协议剥离）
 - 限流：注册/登录 10/min/IP，发信 30/h/用户
+- 注册审核：新用户 pending 不可登录；admin 邮箱收✅/❌一次性审核链接（确认页防邮件网关预取），结果通知申请人

@@ -132,7 +132,7 @@
                 .then(res => {
                     this.loading = false;
                     if (this.isRegisterMode) {
-                        alert('蜀道AI大一统凭证创建成功！请登录。');
+                        alert(res.data.message || '注册申请已提交，请等待管理员审核通过后再登录');
                         this.isRegisterMode = false;
                     } else {
                         localStorage.setItem('mail_token', res.data.token);
