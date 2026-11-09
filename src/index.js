@@ -112,6 +112,51 @@ function sessionToken(request) {
   return new URL(request.url).searchParams.get("token") || "";
 }
 
+// ==================== 多域名工具 ====================
+
+function splitAddr(addr) {
+  const i = (addr || "").lastIndexOf("@");
+  return i === -1 ? { local: addr || "", domain: "" } : { local: addr.slice(0, i), domain: addr.slice(i + 1).toLowerCase() };
+}
+
+// 软删除地址约定：bob@zjd.cn → bob_deleted@zjd.cn
+function deletedAddrOf(fullAddr) {
+  const { local, domain } = splitAddr(fullAddr);
+  return `${local}_deleted@${domain}`;
+}
+
+function allowedDomains(env) {
+  return (env.DOMAINS || env.ALLOWED_DOMAINS || "shudao.ai").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+}
+
+// 从请求来源推断默认域名：mail.zjd.cn → zjd.cn；否则取白名单第一个
+function defaultDomain(env, request) {
+  const domains = allowedDomains(env);
+  const host = (new URL(request.url).hostname || "").toLowerCase();
+  const hit = domains.find(d => host === d || host.endsWith("." + d));
+  return hit || domains[0];
+}
+
+// 账号规范化："bob" / "bob@zjd.cn" → 完整地址；不合法返回 null
+function normalizeAccount(env, request, raw) {
+  const clean = (raw || "").trim();
+  if (!clean) return null;
+  const domains = allowedDomains(env);
+  if (clean.includes("@")) {
+    const { local, domain } = splitAddr(clean);
+    if (!/^[a-zA-Z0-9._-]{1,64}$/.test(local)) return null;
+    if (!domains.includes(domain)) return null;
+    return `${local}@${domain}`;
+  }
+  if (!/^[a-zA-Z0-9._-]{1,64}$/.test(clean)) return null;
+  return `${clean}@${defaultDomain(env, request)}`;
+}
+
+// 管理员 = 任意域名下的 admin 账号（审核通知按申请人域名分发到 admin@域名）
+function isAdminUser(fullAddr) {
+  return splitAddr(fullAddr || "").local.toLowerCase() === "admin";
+}
+
 // 限流：bucket 内 windowMs 时间窗最多 limit 次
 async function rateLimit(env, bucket, limit, windowMs) {
   const now = Date.now();
@@ -335,55 +380,57 @@ export default {
     if (url.pathname === "/api/register" && request.method === "POST") {
       if (!(await rateLimit(env, `register:${ip}`, 10, 60000))) return json({ success: false, message: "操作过于频繁，请稍后再试" }, 429);
       const { username, password } = await getJson();
-      const cleanUser = username ? username.split("@")[0].trim() : "";
-      if (!/^[a-zA-Z0-9._-]{1,64}$/.test(cleanUser)) return json({ success: false, message: "账号仅允许字母/数字/._- 且不超过64位" }, 400);
+      const account = normalizeAccount(env, request, username);
+      if (!account) return json({ success: false, message: "账号格式不正确，或域名不在允许列表" }, 400);
       if (!password || password.length < 6) return json({ success: false, message: "密码至少 6 位" }, 400);
+      const { local, domain } = splitAddr(account);
       try {
         const secureHash = await createPasswordHash(password);
 
         // ---- 注册审核策略：新用户默认 pending；引导场景自动通过 ----
         let status = "pending";
         const total = await env.DB.prepare("SELECT COUNT(*) AS c FROM users").first();
-        const adminExists = await env.DB.prepare("SELECT username FROM users WHERE username = 'admin'").first();
-        if ((total && total.c === 0) || (cleanUser === "admin" && !adminExists)) {
-          status = "approved"; // 系统引导：首个注册用户 / 首个 admin 自动通过，避免无人可审的死锁
+        const adminExists = await env.DB.prepare("SELECT username FROM users WHERE username = ?").bind(`admin@${domain}`).first();
+        if ((total && total.c === 0) || (local.toLowerCase() === "admin" && !adminExists)) {
+          status = "approved"; // 系统引导：全库首个用户 / 该域名首个 admin 自动通过，避免无人可审的死锁
         }
         await env.DB.prepare("INSERT INTO users (username, password_hash, status) VALUES (?, ?, ?)")
-          .bind(cleanUser, secureHash, status).run();
+          .bind(account, secureHash, status).run();
 
         if (status === "approved") {
-          const token = await createSession(env, cleanUser);
-          return json({ success: true, token, username: cleanUser });
+          const token = await createSession(env, account);
+          return json({ success: true, token, username: account });
         }
 
-        // ---- 待审核：生成一次性审核动作，通知送进 admin 管理员邮箱 ----
+        // ---- 待审核：生成一次性审核动作，通知送进该域名的 admin 管理员邮箱 ----
         const reviewToken = toHex(crypto.getRandomValues(new Uint8Array(32)));
         const now = Date.now();
         await env.DB.prepare("INSERT INTO review_actions (token, username, created_at, expires_at) VALUES (?, ?, ?, ?)")
-          .bind(reviewToken, cleanUser, now, now + 7 * 24 * 3600 * 1000).run();
+          .bind(reviewToken, account, now, now + 7 * 24 * 3600 * 1000).run();
 
         const approveUrl = `${url.origin}/api/admin/review?token=${reviewToken}&decision=approve`;
         const rejectUrl = `${url.origin}/api/admin/review?token=${reviewToken}&decision=reject`;
-        const notifyHtml = `<p>新用户 <b>${cleanUser}</b> 申请注册 <b>${cleanUser}@shudao.ai</b> 邮箱账号。</p>
+        const notifyHtml = `<p>新用户 <b>${account}</b> 申请注册邮箱账号。</p>
           <p>请审核：</p>
           <p><a href="${approveUrl}">✅ 通过</a> &nbsp;|&nbsp; <a href="${rejectUrl}">❌ 拒绝</a></p>
           <p style="color:#94a3b8;font-size:12px;">链接 7 天内有效且仅可使用一次；点击后需在页面确认，防止邮件安全网关误触。</p>`;
         await env.DB.prepare(
-          "INSERT INTO emails (to_address, from_address, subject, body_text, body_html, is_draft) VALUES ('admin@shudao.ai', 'system@shudao.ai', ?, ?, ?, 0)"
-        ).bind(`【注册审核】${cleanUser} 申请开通邮箱`, stripHtmlTags(notifyHtml), sanitizeHtml(notifyHtml)).run();
+          "INSERT INTO emails (to_address, from_address, subject, body_text, body_html, is_draft) VALUES (?, 'system@shudao.ai', ?, ?, ?, 0)"
+        ).bind(`admin@${domain}`, `【注册审核】${account} 申请开通邮箱`, stripHtmlTags(notifyHtml), sanitizeHtml(notifyHtml)).run();
 
         return json({ success: true, pending: true, message: "注册申请已提交，请等待管理员审核通过后再登录" });
       } catch {
-        return json({ success: false, message: "账号前缀已被占用" }, 400);
+        return json({ success: false, message: "账号已被占用" }, 400);
       }
     }
 
     if (url.pathname === "/api/login" && request.method === "POST") {
       if (!(await rateLimit(env, `login:${ip}`, 10, 60000))) return json({ success: false, message: "尝试过于频繁，请稍后再试" }, 429);
       const { username, password } = await getJson();
-      const cleanUser = username ? username.split("@")[0].trim() : "";
+      const account = normalizeAccount(env, request, username);
+      if (!account) return json({ success: false, message: "账号格式不正确，或域名不在允许列表" }, 400);
       try {
-        const user = await env.DB.prepare("SELECT * FROM users WHERE username = ?").bind(cleanUser).first();
+        const user = await env.DB.prepare("SELECT * FROM users WHERE username = ?").bind(account).first();
         if (user) {
           const verdict = await verifyPassword(password, user.password_hash);
           if (verdict) {
@@ -398,11 +445,11 @@ export default {
             if (verdict === "ok-legacy") {
               try {
                 const upgraded = await createPasswordHash(password);
-                await env.DB.prepare("UPDATE users SET password_hash = ? WHERE username = ?").bind(upgraded, cleanUser).run();
+                await env.DB.prepare("UPDATE users SET password_hash = ? WHERE username = ?").bind(upgraded, account).run();
               } catch { /* 升级失败不影响本次登录 */ }
             }
-            const token = await createSession(env, cleanUser);
-            return json({ success: true, token, username: cleanUser });
+            const token = await createSession(env, account);
+            return json({ success: true, token, username: account });
           }
         }
       } catch (dbErr) {
@@ -417,6 +464,10 @@ export default {
         try { await env.DB.prepare("DELETE FROM sessions WHERE token = ?").bind(token).run(); } catch { }
       }
       return json({ success: true });
+    }
+
+    if (url.pathname === "/api/domains" && request.method === "GET") {
+      return json({ domains: allowedDomains(env), default: defaultDomain(env, request) });
     }
 
     if (url.pathname === "/api/me" && request.method === "GET") {
@@ -438,7 +489,7 @@ export default {
       const label = decision === "reject" ? "拒绝" : "通过";
       return reviewPage(`
         <h2>📋 注册审核</h2>
-        <p>申请人：<b style="font-size:22px;">${row.username}</b>@shudao.ai</p>
+        <p>申请人：<b style="font-size:22px;">${row.username}</b></p>
         <p>确认<b>${label}</b>该用户的注册申请？</p>
         <form method="POST" action="/api/admin/review">
           <input type="hidden" name="token" value="${token}">
@@ -476,7 +527,7 @@ export default {
         : `<p>很遗憾，您的注册申请<b>未通过</b>审核。如有疑问请联系管理员。</p>`;
       await env.DB.prepare(
         "INSERT INTO emails (to_address, from_address, subject, body_text, body_html, is_draft) VALUES (?, 'system@shudao.ai', ?, ?, ?, 0)"
-      ).bind(`${row.username}@shudao.ai`, `【注册审核】申请${label}`, stripHtmlTags(bodyHtml), sanitizeHtml(bodyHtml)).run();
+      ).bind(row.username, `【注册审核】申请${label}`, stripHtmlTags(bodyHtml), sanitizeHtml(bodyHtml)).run();
 
       return reviewPage(`<h2>✅ 操作完成</h2><p>用户 <b>${row.username}</b> 的注册申请已<b>${label}</b>。</p><p>结果已通知至申请人邮箱。</p>`);
     }
@@ -484,7 +535,7 @@ export default {
     // 管理员：待审列表（供面板/程序化查询）
     if (url.pathname === "/api/admin/pending" && request.method === "GET") {
       const user = await getSessionUser(env, request);
-      if (user !== "admin") return json({ success: false, message: "仅管理员可用" }, 403);
+      if (!isAdminUser(user)) return json({ success: false, message: "仅管理员可用" }, 403);
       const { results } = await env.DB.prepare("SELECT username, status FROM users WHERE status = 'pending' ORDER BY username").all();
       return json(results);
     }
@@ -496,16 +547,16 @@ export default {
       if (!user) return json({ success: false, message: "未登录" }, 401);
 
       const filter = url.searchParams.get("filter") || "inbox";
-      const userAddress = `${user}@shudao.ai`;
-      const deletedAddress = `${user}_deleted@shudao.ai`;
+      const userAddress = user;
+      const deletedAddress = deletedAddrOf(user);
       let sql = "", params = [];
 
       if (filter === "trash") {
         sql = "SELECT * FROM emails WHERE to_address = ? OR from_address = ? ORDER BY received_at DESC";
         params = [deletedAddress, deletedAddress];
       } else if (filter === "sent") {
-        // 排除已被收件人软删除的信（地址被改写为 *_deleted@shudao.ai）
-        sql = "SELECT * FROM emails WHERE from_address = ? AND is_draft = 0 AND to_address NOT LIKE '%\\_deleted@shudao.ai' ESCAPE '\\' ORDER BY received_at DESC";
+        // 排除已被收件人软删除的信（地址被改写为 *_deleted@域名）
+        sql = "SELECT * FROM emails WHERE from_address = ? AND is_draft = 0 AND to_address NOT LIKE '%\\_deleted@%' ESCAPE '\\' ORDER BY received_at DESC";
         params = [userAddress];
       } else if (filter === "draft") {
         sql = "SELECT * FROM emails WHERE from_address = ? AND is_draft = 1 ORDER BY received_at DESC";
@@ -538,8 +589,8 @@ export default {
       const value = body.value;
       if (!Number.isInteger(id) || id <= 0) return json({ success: false, message: "无效的邮件ID" }, 400);
 
-      const userAddress = `${user}@shudao.ai`;
-      const deletedAddress = `${user}_deleted@shudao.ai`;
+      const userAddress = user;
+      const deletedAddress = deletedAddrOf(user);
       const mail = await env.DB.prepare("SELECT * FROM emails WHERE id = ?").bind(id).first();
       if (!mail) return json({ success: false, message: "邮件不存在" }, 404);
 
@@ -587,7 +638,8 @@ export default {
         const subject = body.subject || "(无主题)";
         const content = body.content || "";
         const attachments = Array.isArray(body.attachments) ? body.attachments : [];
-        const from_email = `${user}@shudao.ai`;
+        const from_email = user;
+        const fromName = splitAddr(user).local;
 
         if (!to_email || !content) return json({ success: false, message: "收件人与内容必填" }, 400);
         if (attachments.length > 10) return json({ success: false, message: "附件最多 10 个" }, 400);
@@ -602,7 +654,7 @@ export default {
 
         const safeHtml = sanitizeHtml(content);
         const resendPayload = {
-          from: `${user} <${from_email}>`,
+          from: `${fromName} <${from_email}>`,
           to: [String(to_email).trim()],
           subject,
           html: safeHtml
@@ -643,7 +695,7 @@ export default {
       const user = await getSessionUser(env, request);
       if (!user) return json({ success: false, message: "未登录" }, 401);
       const body = await getJson();
-      const userAddress = `${user}@shudao.ai`;
+      const userAddress = user;
       const safeHtml = sanitizeHtml(body.content || "");
       const plain = stripHtmlTags(safeHtml);
       const to = body.to ? String(body.to).trim() : "";
@@ -673,8 +725,8 @@ export default {
       if (!key.startsWith("attachments/")) return json({ success: false, message: "无效附件" }, 400);
       if (!env.ATTACHMENTS) return json({ success: false, message: "服务端未启用附件存储" }, 500);
 
-      const userAddress = `${user}@shudao.ai`;
-      const deletedAddress = `${user}_deleted@shudao.ai`;
+      const userAddress = user;
+      const deletedAddress = deletedAddrOf(user);
       const escapedKey = key.replace(/[%_\\]/g, c => "\\" + c);
       const owned = await env.DB.prepare(
         "SELECT id FROM emails WHERE (to_address IN (?, ?) OR from_address IN (?, ?)) AND attachments_json LIKE ? ESCAPE '\\' LIMIT 1"
@@ -697,7 +749,7 @@ export default {
 
     if (url.pathname === "/api/tenders/list" && request.method === "GET") {
       const viewer = await getSessionUser(env, request);
-      const isAdmin = viewer === "admin";
+      const isAdmin = isAdminUser(viewer);
       const category = url.searchParams.get("category") || "IT";
       try {
         let sql = "SELECT * FROM tenders WHERE industry_category = ?";
@@ -713,7 +765,7 @@ export default {
 
     if (url.pathname === "/api/tenders/create" && request.method === "POST") {
       const user = await getSessionUser(env, request);
-      if (user !== "admin") return json({ success: false, message: "仅管理员可发布" }, 403);
+      if (!isAdminUser(user)) return json({ success: false, message: "仅管理员可发布" }, 403);
       const body = await getJson();
       const title = String(body.title || "").trim();
       if (!title) return json({ success: false, message: "项目名称必填" }, 400);

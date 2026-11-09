@@ -5,7 +5,7 @@
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS users (
-  username      TEXT PRIMARY KEY,
+  username      TEXT PRIMARY KEY,        -- 完整地址 user@domain（多域名）
   password_hash TEXT NOT NULL,
   status        TEXT DEFAULT 'pending'   -- pending | approved | rejected
 );

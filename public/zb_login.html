@@ -49,6 +49,8 @@
         .form-input { width: 100%; padding: 12px 16px; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; color: #fff; font-size: 15px; outline: none; transition: all 0.25s; }
         .form-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15); background: rgba(15, 23, 42, 0.8); }
         .suffix-tag { position: absolute; right: 16px; color: #475569; font-size: 14px; font-weight: 700; pointer-events: none; }
+        .domain-select { position: absolute; right: 8px; background: transparent; border: none; color: #94a3b8; font-size: 14px; font-weight: 700; outline: none; cursor: pointer; }
+        .domain-select option { background: #1e293b; color: #fff; }
         .btn-primary { width: 100%; padding: 14px; background: linear-gradient(90deg, #2563eb 0%, #1d4ed8 100%); color: #fff; border: none; border-radius: 8px; font-size: 16px; font-weight: 700; cursor: pointer; transition: all 0.2s; margin-top: 10px; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2); }
         .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(37, 99, 235, 0.3); opacity: 0.95; }
         .card-footer { margin-top: 25px; text-align: center; font-size: 13px; color: #64748b; }
@@ -85,8 +87,10 @@
                     <div class="form-group">
                         <label class="form-label">通行证账号 (安全邮局账号前缀)</label>
                         <div class="input-wrapper">
-                            <input type="text" v-model="formData.username" class="form-input" placeholder="请输入用户名" required style="padding-right: 115px;">
-                            <span class="suffix-tag">@shudao.ai</span>
+                            <input type="text" v-model="formData.username" class="form-input" placeholder="请输入用户名" required style="padding-right: 135px;">
+                            <select v-model="formData.domain" class="domain-select">
+                                <option v-for="d in domains" :key="d" :value="d">@{{ d }}</option>
+                            </select>
                         </div>
                     </div>
                     <div class="form-group">
@@ -114,19 +118,29 @@
         data: {
             isRegisterMode: false,
             loading: false,
-            formData: { username: '', password: '' },
+            domains: [],
+            formData: { username: '', password: '', domain: '' },
             tickerData: [
                 { tag: '🖥️ IT新基建', cls: 'tag-it', title: '蜀道集团数据中枢智算集群扩容项目公告', time: '1分钟前' },
                 { tag: '🎨 工业设计', cls: 'tag-design', title: '中铁鲁班网BIM三维建模及工程图纸校对智算接口采购', time: '4分钟前' }
             ]
+        },
+        created() {
+            axios.get(`${API_BASE}/api/domains`)
+            .then(res => {
+                this.domains = res.data.domains || [];
+                this.formData.domain = res.data.default || this.domains[0] || '';
+            })
+            .catch(() => { this.domains = ['shudao.ai']; this.formData.domain = 'shudao.ai'; });
         },
         methods: {
             handleSubmit() {
                 if (this.loading) return;
                 this.loading = true;
                 const targetPath = this.isRegisterMode ? '/api/register' : '/api/login';
+                const fullAccount = this.formData.username.split('@')[0].trim() + '@' + this.formData.domain;
                 axios.post(`${API_BASE}${targetPath}`, {
-                    username: this.formData.username.trim(),
+                    username: fullAccount,
                     password: this.formData.password
                 })
                 .then(res => {

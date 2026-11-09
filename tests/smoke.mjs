@@ -65,17 +65,17 @@ const tokenOf = name => {
   const t = m && (m.body_html || "").match(/token=([0-9a-f]+)/);
   return t && t[1];
 };
-ok("审核链接含一次性令牌", !!tokenOf("alice") && !!tokenOf("bob") && !!tokenOf("carol"));
+ok("审核链接含一次性令牌", !!tokenOf("alice@shudao.ai") && !!tokenOf("bob@shudao.ai") && !!tokenOf("carol@shudao.ai"));
 
 // 通过 alice
-r = await api("/api/admin/review", { method: "POST", body: { token: tokenOf("alice"), decision: "approve" } });
+r = await api("/api/admin/review", { method: "POST", body: { token: tokenOf("alice@shudao.ai"), decision: "approve" } });
 ok("通过 alice 审核", r.status === 200);
 r = await api("/api/login", { method: "POST", body: { username: "alice", password: "secret123" } });
 ok("通过后 alice 可登录", r.status === 200 && r.data.token, JSON.stringify(r.data));
 const aliceToken = r.data.token;
 
 // 拒绝 carol
-r = await api("/api/admin/review", { method: "POST", body: { token: tokenOf("carol"), decision: "reject" } });
+r = await api("/api/admin/review", { method: "POST", body: { token: tokenOf("carol@shudao.ai"), decision: "reject" } });
 ok("拒绝 carol 审核", r.status === 200);
 r = await api("/api/login", { method: "POST", body: { username: "carol", password: "carol123" } });
 ok("被拒用户不能登录", r.status === 403 && /未通过/.test(r.data.message || ""), JSON.stringify(r.data));
@@ -83,13 +83,13 @@ ok("被拒用户不能登录", r.status === 403 && /未通过/.test(r.data.messa
 // 令牌单次有效（重放同令牌 → 无效）
 const replayRes = await fetch(BASE + "/api/admin/review", {
   method: "POST", headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ token: tokenOf("alice"), decision: "approve" })
+  body: JSON.stringify({ token: tokenOf("alice@shudao.ai"), decision: "approve" })
 });
 const replayText = await replayRes.text();
 ok("审核令牌不可重放", /无效|过期/.test(replayText), replayText.slice(0, 60));
 
 // 通过 bob
-r = await api("/api/admin/review", { method: "POST", body: { token: tokenOf("bob"), decision: "approve" } });
+r = await api("/api/admin/review", { method: "POST", body: { token: tokenOf("bob@shudao.ai"), decision: "approve" } });
 r = await api("/api/login", { method: "POST", body: { username: "bob", password: "secret456" } });
 const bobToken = r.data.token;
 ok("通过后 bob 可登录", !!bobToken);
@@ -99,7 +99,7 @@ r = await api("/api/emails?filter=inbox", { token: aliceToken });
 ok("alice 收到审核结果通知", (r.data || []).some(m => /注册审核】申请已通过/.test(m.subject || "")));
 
 r = await api("/api/me", { token: aliceToken });
-ok("/api/me 返回 alice", r.data && r.data.username === "alice");
+ok("/api/me 返回完整地址 alice@shudao.ai", r.data && r.data.username === "alice@shudao.ai", JSON.stringify(r.data));
 
 r = await api("/api/logout", { method: "POST", token: bobToken });
 r = await api("/api/me", { token: bobToken });
@@ -206,6 +206,46 @@ r = await api("/api/radar/force-trigger", { method: "POST", token: aliceToken })
 ok("雷达触发（未配源→就绪提示）", r.data.success && /RADAR_SOURCES/.test(r.data.message || ""), JSON.stringify(r.data));
 r = await api("/api/radar/force-trigger", { method: "POST" });
 ok("未登录触发被拒", r.status === 401);
+
+console.log("\n== 9. 多域名架构 ==");
+r = await api("/api/domains");
+ok("域名白名单接口", r.status === 200 && Array.isArray(r.data.domains) && r.data.domains.includes("shudao.ai") && r.data.domains.includes("zjd.cn"), JSON.stringify(r.data));
+
+r = await api("/api/register", { method: "POST", body: { username: "mallory@evil.com", password: "evil123456" } });
+ok("非白名单域名注册被拒", r.status === 400, `status=${r.status}`);
+
+r = await api("/api/register", { method: "POST", body: { username: "eve@zjd.cn", password: "eve123456" } });
+ok("zjd.cn 新用户 eve → 待审核", r.data.success && r.data.pending, JSON.stringify(r.data));
+
+r = await api("/api/register", { method: "POST", body: { username: "admin@zjd.cn", password: "zjdadmin1" } });
+const zjdAdminToken = r.data && r.data.token;
+ok("zjd.cn 首个 admin 自动通过", !!zjdAdminToken, JSON.stringify(r.data));
+
+// 审核通知按域名路由到 admin@zjd.cn（而非 admin@shudao.ai）
+r = await api("/api/emails?filter=inbox", { token: zjdAdminToken });
+const zjdReview = (r.data || []).find(m => (m.subject || "").includes("【注册审核】eve@zjd.cn "));
+ok("审核通知路由到 admin@zjd.cn", !!zjdReview, JSON.stringify((r.data || []).map(m => m.subject)));
+const zjdToken = zjdReview && (zjdReview.body_html || "").match(/token=([0-9a-f]+)/);
+r = await api("/api/admin/review", { method: "POST", body: { token: zjdToken && zjdToken[1], decision: "approve" } });
+ok("通过 eve@zjd.cn 审核", r.status === 200);
+
+r = await api("/api/login", { method: "POST", body: { username: "eve@zjd.cn", password: "eve123456" } });
+const eveToken = r.data && r.data.token;
+ok("eve@zjd.cn 登录成功", !!eveToken, JSON.stringify(r.data));
+r = await api("/api/me", { token: eveToken });
+ok("eve 身份为 eve@zjd.cn", r.data && r.data.username === "eve@zjd.cn");
+
+// 域名隔离：eve@shudao.ai 是完全独立的另一个账号
+r = await api("/api/register", { method: "POST", body: { username: "eve@shudao.ai", password: "other12345" } });
+ok("eve@shudao.ai 独立注册 → 待审核", r.data.success && r.data.pending, JSON.stringify(r.data));
+r = await api("/api/login", { method: "POST", body: { username: "eve@shudao.ai", password: "eve123456" } });
+ok("zjd 密码打不开 shudao 同名账号", r.status === 403 || r.status === 401, `status=${r.status}`);
+r = await api("/api/login", { method: "POST", body: { username: "eve@evil.com", password: "eve123456" } });
+ok("非白名单域名登录被拒", r.status === 400, `status=${r.status}`);
+
+// 各域名邮件收发互不串扰：eve@zjd.cn 收件箱只看自己域名地址
+r = await api("/api/emails?filter=inbox", { token: eveToken });
+ok("eve@zjd.cn 收件箱仅含本域地址", (r.data || []).every(m => (m.to_address || "").endsWith("@zjd.cn")), JSON.stringify((r.data || []).map(m => m.to_address)));
 
 console.log(`\n========== 结果: ${pass} 通过 / ${fail} 失败 ==========`);
 process.exit(fail ? 1 : 0);

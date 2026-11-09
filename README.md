@@ -2,8 +2,9 @@
 
 Cloudflare Workers 全栈应用：邮件收发（Email Routing + Resend）+ 招标情报雷达。
 
-- 线上：https://mail.shudao.ai/
+- 线上：https://mail.shudao.ai/ （多域名：mail.zjd.cn 等，见 DEPLOY.md 接入清单）
 - 架构：Workers（`src/index.js`）+ D1（用户/邮件/会话/招标）+ R2（附件）+ 静态 Vue2 页面（`public/`）
+- **多域名**：账号 = 完整地址（`bob@shudao.ai` 与 `bob@zjd.cn` 独立），域名白名单在 wrangler.toml `DOMAINS`
 
 ## 目录
 ```
@@ -32,6 +33,7 @@ node tests/smoke.mjs        # 需先在本地库注入测试数据（见脚本�
 ## API 一览
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
+| GET | /api/domains | 公开 | 域名白名单 + 默认域名（按访问入口推断） |
 | POST | /api/register | 限流 | 注册（新用户进审核流，引导账号自动通过） |
 | POST | /api/login | 限流 | 登录（仅 approved 账号），返回会话令牌 |
 | GET | /api/admin/review?token&decision | 链接 | 审核二次确认页（防预取） |

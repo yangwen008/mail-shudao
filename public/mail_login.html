@@ -16,6 +16,8 @@
         .form-label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 6px; }
         .form-input { width: 100%; padding: 12px 16px; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; color: #fff; font-size: 15px; outline: none; }
         .suffix-tag { position: absolute; right: 16px; color: #64748b; font-size: 14px; font-weight: 600; pointer-events: none; }
+        .domain-select { position: absolute; right: 8px; background: transparent; border: none; color: #64748b; font-size: 14px; font-weight: 600; outline: none; cursor: pointer; }
+        .domain-select option { background: #1e293b; color: #fff; }
         .btn-primary { width: 100%; padding: 13px; background: linear-gradient(90deg, #2563eb 0%, #1d4ed8 100%); color: #fff; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 10px; }
     </style>
 </head>
@@ -27,8 +29,10 @@
             <div class="form-group">
                 <label class="form-label">邮局账号</label>
                 <div class="input-wrapper">
-                    <input type="text" v-model="formData.username" class="form-input" required style="padding-right: 110px;">
-                    <span class="suffix-tag">@shudao.ai</span>
+                    <input type="text" v-model="formData.username" class="form-input" required style="padding-right: 135px;">
+                    <select v-model="formData.domain" class="domain-select">
+                        <option v-for="d in domains" :key="d" :value="d">@{{ d }}</option>
+                    </select>
                 </div>
             </div>
             <div class="form-group">
@@ -49,14 +53,23 @@
     const API_BASE = window.location.origin;
     new Vue({
         el: '#app',
-        data: { loading: false, isRegisterMode: false, formData: { username: '', password: '' } },
+        data: { loading: false, isRegisterMode: false, domains: [], formData: { username: '', password: '', domain: '' } },
+        created() {
+            axios.get(`${API_BASE}/api/domains`)
+            .then(res => {
+                this.domains = res.data.domains || [];
+                this.formData.domain = res.data.default || this.domains[0] || '';
+            })
+            .catch(() => { this.domains = ['shudao.ai']; this.formData.domain = 'shudao.ai'; });
+        },
         methods: {
             handleSubmit() {
                 if (this.loading) return;
                 if (this.formData.password.length < 6) { alert('密码至少 6 位'); return; }
                 this.loading = true;
                 const targetPath = this.isRegisterMode ? '/api/register' : '/api/login';
-                axios.post(`${API_BASE}${targetPath}`, { username: this.formData.username.trim(), password: this.formData.password })
+                const fullAccount = this.formData.username.split('@')[0].trim() + '@' + this.formData.domain;
+                axios.post(`${API_BASE}${targetPath}`, { username: fullAccount, password: this.formData.password })
                 .then(res => {
                     this.loading = false;
                     if (res.data.token) {

@@ -136,7 +136,7 @@
             publishData: { title: '', industry_category: 'IT', budget: '详见标书', contact_info: '' }
         },
         created() {
-            if (this.username && this.username.toLowerCase() === 'admin') this.isAdmin = true;
+            if (this.username && this.username.split('@')[0].toLowerCase() === 'admin') this.isAdmin = true;
             if (this.username) this.fetchSubscription();
             this.fetchTenders();
         },

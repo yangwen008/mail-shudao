@@ -14,8 +14,9 @@ binding = "ATTACHMENTS"
 bucket_name = "mail-attachments"
 
 [vars]
-ALLOWED_DOMAINS = "shudao.ai"
-DOMAINS = "shudao.ai"
+ALLOWED_DOMAINS = "shudao.ai,zjd.cn"
+# 多域名白名单（逗号分隔）；登录/注册页域名下拉、账号规范化都读这里
+DOMAINS = "shudao.ai,zjd.cn"
 # 招标雷达情报源：逗号分隔的 RSS/Atom 地址（不配置则雷达触发仅返回就绪提示）
 # RADAR_SOURCES = "https://example.com/tenders.xml,https://example.org/feed"
 
@@ -23,4 +24,7 @@ DOMAINS = "shudao.ai"
 
 routes = [
   { pattern = "mail.shudao.ai", custom_domain = true }
+  # 多域名：等 mail.zjd.cn 的旧 DNS 记录删除后再取消注释并部署，
+  # 否则 deploy 会因 DNS 冲突失败（也可直接在 CF 控制台绑定）
+  # , { pattern = "mail.zjd.cn", custom_domain = true }
 ]
