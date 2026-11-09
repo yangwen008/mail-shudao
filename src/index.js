@@ -102,7 +102,8 @@ async function getSessionUser(env, request) {
   try {
     const row = await env.DB.prepare("SELECT username, expires_at FROM sessions WHERE token = ?").bind(token).first();
     if (!row || row.expires_at < Date.now()) return null;
-    return row.username;
+    // 兼容多域名迁移前创建的旧会话（裸用户名）→ 自动归一化为完整地址
+    return row.username.includes("@") ? row.username : `${row.username}@${defaultDomain(env, request)}`;
   } catch { return null; }
 }
 
@@ -430,7 +431,17 @@ export default {
       const account = normalizeAccount(env, request, username);
       if (!account) return json({ success: false, message: "账号格式不正确，或域名不在允许列表" }, 400);
       try {
-        const user = await env.DB.prepare("SELECT * FROM users WHERE username = ?").bind(account).first();
+        let user = await env.DB.prepare("SELECT * FROM users WHERE username = ?").bind(account).first();
+        // 兼容多域名迁移前的旧账号行（裸用户名）：命中后自愈升级为完整地址
+        if (!user) {
+          const legacy = await env.DB.prepare("SELECT * FROM users WHERE username = ?").bind(splitAddr(account).local).first();
+          if (legacy) {
+            try {
+              await env.DB.prepare("UPDATE users SET username = ? WHERE username = ?").bind(account, splitAddr(account).local).run();
+            } catch { /* 与已有完整地址行冲突时忽略 */ }
+            user = legacy;
+          }
+        }
         if (user) {
           const verdict = await verifyPassword(password, user.password_hash);
           if (verdict) {
